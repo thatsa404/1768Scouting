@@ -10,17 +10,17 @@ Scouting App To-do
 	- 3. Scouting data & user notes (Make TBD...)
 	- 4. Pit scouting
 
+- Match details should link to team pages
+- Wolf image - background
+
 - Password protect?
 
 Quick fixes
 
-IP - Team details page should use similar tiering as the rest of the page - IRON THIS OUT
 
-- Predicted match scores (schedule, make fake time)
-- Add nexus connection/queue times below qual match #
-- Wolf image - background
-- Match details should link to team pages
+
 - Adjust components shown in match prep (not just statbotics?)
-- Laptop view needs to be smaller (~2/3)
+- Compare teams page?
+- Get scouting info up and running
 
 

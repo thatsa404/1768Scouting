@@ -25,6 +25,51 @@ window.currentFocusedTeam = null;
 // 3. UTILITY FUNCTIONS
 const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 
+function getTeamNotes() {
+    try { return JSON.parse(localStorage.getItem('teamNotes') || '{}'); } catch { return {}; }
+}
+// Returns { matchKey: { text, qm } } for one team; migrates legacy formats transparently.
+function getTeamNotesMap(teamNumber) {
+    const raw = getTeamNotes()[String(teamNumber)];
+    if (!raw) return {};
+    if (typeof raw === 'string') return { general: { text: raw, qm: null } };
+    // Old single-note format: { text, qm }
+    if (typeof raw.text === 'string') {
+        const key = raw.qm != null ? String(raw.qm) : 'general';
+        return { [key]: { text: raw.text, qm: raw.qm ?? null } };
+    }
+    return raw;
+}
+// Returns { text, qm } for a specific match context (qm = number or null = general).
+function getTeamNote(teamNumber, qm = null) {
+    const map = getTeamNotesMap(teamNumber);
+    return map[qm != null ? String(qm) : 'general'] || null;
+}
+// Formatted string for a specific match context.
+function noteDisplayText(teamNumber, qm = null) {
+    const note = getTeamNote(teamNumber, qm);
+    if (!note?.text) return '';
+    return note.qm != null ? `(QM ${note.qm}) ${note.text}` : note.text;
+}
+// All note lines for a team, sorted by match number (for overview tab).
+function allNoteDisplayLines(teamNumber) {
+    return Object.values(getTeamNotesMap(teamNumber))
+        .filter(n => n.text)
+        .sort((a, b) => (a.qm ?? Infinity) - (b.qm ?? Infinity))
+        .map(n => n.qm != null ? `(QM ${n.qm}) ${n.text}` : n.text);
+}
+function saveTeamNote(teamNumber, text, qm = null) {
+    const all = getTeamNotes();
+    const teamKey = String(teamNumber);
+    const map = getTeamNotesMap(teamNumber);
+    const matchKey = qm != null ? String(qm) : 'general';
+    if (text.trim()) map[matchKey] = { text: text.trim(), qm: qm ?? null };
+    else delete map[matchKey];
+    if (Object.keys(map).length === 0) delete all[teamKey];
+    else all[teamKey] = map;
+    localStorage.setItem('teamNotes', JSON.stringify(all));
+}
+
 const TIER_BG  = { S: '#f59e0b', A: '#4ade80', B: '#a855f7', C: '#64748b' };
 const TIER_STYLE = {
     S: { color: '#f59e0b', bg: 'rgba(245,158,11,0.08)' },
@@ -261,7 +306,7 @@ window.viewMatchPrep = async function (matchKey) {
     renderPrepChart(redTeamsData, blueTeamsData);
 
     // 2. Helper function to build a team card
-    const createTeamCard = async (teamNum) => {
+    const createTeamCard = async (teamNum, matchNumber = null) => {
         const team = await db.teams.get(parseInt(teamNum));
 
         // 1. DATA CLEANUP: Force both to strings and trim any whitespace
@@ -282,32 +327,44 @@ window.viewMatchPrep = async function (matchKey) {
         }
 
         const tier = overallTierOf(team);
+        const hasNote = !!getTeamNote(teamNum, matchNumber)?.text;
+        const qmArg = matchNumber != null ? matchNumber : 'null';
 
         return `
-        <div class="prep-team-card ${focusClass}">
+        <div class="prep-team-card ${focusClass}" id="prep-card-${teamNum}">
             <div class="prep-card-header">
                 <div class="header-left" onclick="highlightTeam('${teamNum}')" style="cursor:pointer;">
                     <span class="prep-team-number">${teamNum}</span>
                 </div>
                 ${tierBadge(tier, 'prep-tier-badge', 'Tier')}
-                <button class="profile-link-btn" onclick="viewTeamDetail(${teamNum})">
-                    View Profile
-                </button>
             </div>
-            
+
             <div class="prep-stats-grid" onclick="highlightTeam('${teamNum}')" style="cursor:pointer;">
                 <div><div class="stat-label">Total EPA</div><div class="stat-value">${team.currentEPA.toFixed(1)}</div></div>
                 <div><div class="stat-label">Auto</div><div class="stat-value">${team.autoEPA.toFixed(1)}</div></div>
                 <div><div class="stat-label">Teleop</div><div class="stat-value">${team.teleopEPA.toFixed(1)}</div></div>
                 <div><div class="stat-label">Endgame</div><div class="stat-value">${team.endgameEPA.toFixed(1)}</div></div>
             </div>
+
+            <div class="prep-action-btns" style="display:flex;gap:8px;margin-top:10px;">
+                <button onclick="viewTeamDetail(${teamNum})" style="flex:1;background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:6px;padding:7px;font-size:0.82em;font-weight:600;cursor:pointer;">View Profile</button>
+                <button id="note-toggle-btn-${teamNum}" onclick="togglePrepNote('${teamNum}')" style="flex:1;background:#1e293b;color:#94a3b8;border:1px solid ${hasNote ? '#3b82f6' : '#334155'};border-radius:6px;padding:7px;font-size:0.82em;font-weight:600;cursor:pointer;">${hasNote ? 'Note ▾' : 'Notes ▾'}</button>
+            </div>
+            <div id="prep-note-section-${teamNum}" data-view-all="false" style="display:none;margin-top:8px;">
+                <div style="display:flex;justify-content:flex-end;margin-bottom:5px;">
+                    <button id="note-view-toggle-${teamNum}" onclick="togglePrepNoteView('${teamNum}', ${qmArg})" style="background:none;border:1px solid #334155;color:#64748b;border-radius:4px;padding:2px 8px;font-size:0.72em;cursor:pointer;">Show All</button>
+                </div>
+                <div id="prep-note-content-${teamNum}">
+                    ${renderPrepNoteSection(teamNum, matchNumber)}
+                </div>
+            </div>
         </div>
     `;
     };
 
     // 3. Populate Red and Blue Lists
-    const redCards = await Promise.all(match.red.map(num => createTeamCard(num)));
-    const blueCards = await Promise.all(match.blue.map(num => createTeamCard(num)));
+    const redCards = await Promise.all(match.red.map(num => createTeamCard(num, match.matchNumber)));
+    const blueCards = await Promise.all(match.blue.map(num => createTeamCard(num, match.matchNumber)));
 
     document.getElementById('redPrepList').innerHTML = redCards.join('');
     document.getElementById('bluePrepList').innerHTML = blueCards.join('');
@@ -505,6 +562,166 @@ window.closeMatchDetail = function () {
         document.getElementById('splitRightPanel').style.display = 'flex';
     }
 };
+
+window.closePrepView = function () {
+    if (document.body.classList.contains('split-ui')) {
+        document.getElementById('matchPrepView').style.display = 'none';
+        if (!popRightPanel()) {
+            document.getElementById('splitRightPanel').style.display = 'flex';
+        }
+    } else {
+        window.switchView('scheduleView');
+    }
+};
+
+// ── Note editor (match prep cards) ──────────────────────────────────────────
+
+const NOTE_TA_STYLE = 'width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f8fafc;padding:8px;font-size:0.85em;font-family:inherit;resize:vertical;min-height:60px;margin-top:6px;';
+const NOTE_BTN = (label, color, onclick) =>
+    `<button onclick="${onclick}" style="background:${color};color:#f8fafc;border:none;border-radius:6px;padding:5px 12px;font-size:0.82em;font-weight:600;cursor:pointer;">${label}</button>`;
+
+function renderPrepNoteSection(teamNum, qm) {
+    const note = getTeamNote(teamNum, qm);
+    const qmArg = qm != null ? qm : 'null';
+    if (note?.text) {
+        return `<div class="prep-note-display" style="color:#94a3b8;font-size:0.82em;line-height:1.4;padding:6px 8px;background:#0f172a;border-radius:4px;border-left:2px solid #3b82f6;white-space:pre-wrap;margin-bottom:6px;">${noteDisplayText(teamNum, qm)}</div>
+            <div style="display:flex;gap:6px;">
+                ${NOTE_BTN('Edit', '#334155', `showPrepNoteEditor('${teamNum}', ${qmArg})`)}
+                ${NOTE_BTN('Delete', '#7f1d1d', `deletePrepNote('${teamNum}', ${qmArg})`)}
+            </div>`;
+    }
+    const label = qm != null ? ` for QM ${qm}` : '';
+    return `<div style="color:#475569;font-size:0.82em;margin-bottom:6px;font-style:italic;">No note${label}.</div>
+        ${NOTE_BTN('Add Note', '#3b82f6', `showPrepNoteEditor('${teamNum}', ${qmArg})`)}`;
+}
+
+window.togglePrepNote = function (teamNum) {
+    const section = document.getElementById(`prep-note-section-${teamNum}`);
+    const btn = document.getElementById(`note-toggle-btn-${teamNum}`);
+    if (!section) return;
+    const opening = section.style.display === 'none';
+    section.style.display = opening ? 'block' : 'none';
+    if (btn) btn.textContent = btn.textContent.replace(/[▾▴]/, opening ? '▴' : '▾');
+};
+
+window.togglePrepNoteView = function (teamNum, qm) {
+    const section = document.getElementById(`prep-note-section-${teamNum}`);
+    const viewBtn = document.getElementById(`note-view-toggle-${teamNum}`);
+    const content = document.getElementById(`prep-note-content-${teamNum}`);
+    if (!section || !content) return;
+    const showingAll = section.dataset.viewAll === 'true';
+    if (showingAll) {
+        section.dataset.viewAll = 'false';
+        if (viewBtn) viewBtn.textContent = 'Show All';
+        content.innerHTML = renderPrepNoteSection(teamNum, qm);
+    } else {
+        section.dataset.viewAll = 'true';
+        if (viewBtn) viewBtn.textContent = 'This Match';
+        const lines = allNoteDisplayLines(teamNum);
+        content.innerHTML = lines.length
+            ? `<div class="prep-note-display" style="color:#94a3b8;font-size:0.82em;line-height:1.6;white-space:pre-wrap;">${lines.join('\n')}</div>`
+            : `<div style="color:#475569;font-size:0.82em;font-style:italic;">No notes for this team yet.</div>`;
+    }
+};
+
+window.showPrepNoteEditor = function (teamNum, qm) {
+    const content = document.getElementById(`prep-note-content-${teamNum}`);
+    if (!content) return;
+    const qmArg = qm != null ? qm : 'null';
+    const existing = getTeamNote(teamNum, qm);
+    content.innerHTML = `<textarea id="note-ta-${teamNum}" style="${NOTE_TA_STYLE}">${existing?.text ?? ''}</textarea>
+        <div style="display:flex;gap:6px;margin-top:6px;">
+            ${NOTE_BTN('Save', '#3b82f6', `savePrepNote('${teamNum}', ${qmArg})`)}
+            ${NOTE_BTN('Cancel', '#334155', `cancelPrepNoteEditor('${teamNum}', ${qmArg})`)}
+        </div>`;
+    document.getElementById(`note-ta-${teamNum}`)?.focus();
+};
+
+window.savePrepNote = function (teamNum, qm) {
+    const text = document.getElementById(`note-ta-${teamNum}`)?.value || '';
+    saveTeamNote(teamNum, text, qm);
+    const section = document.getElementById(`prep-note-section-${teamNum}`);
+    const content = document.getElementById(`prep-note-content-${teamNum}`);
+    if (section) section.dataset.viewAll = 'false';
+    const viewBtn = document.getElementById(`note-view-toggle-${teamNum}`);
+    if (viewBtn) viewBtn.textContent = 'Show All';
+    if (content) content.innerHTML = renderPrepNoteSection(teamNum, qm);
+    _updateNoteToggleBtn(teamNum, qm);
+};
+
+window.cancelPrepNoteEditor = function (teamNum, qm) {
+    const content = document.getElementById(`prep-note-content-${teamNum}`);
+    if (content) content.innerHTML = renderPrepNoteSection(teamNum, qm);
+};
+
+window.deletePrepNote = function (teamNum, qm) {
+    saveTeamNote(teamNum, '', qm);
+    const section = document.getElementById(`prep-note-section-${teamNum}`);
+    const content = document.getElementById(`prep-note-content-${teamNum}`);
+    if (section) section.dataset.viewAll = 'false';
+    const viewBtn = document.getElementById(`note-view-toggle-${teamNum}`);
+    if (viewBtn) viewBtn.textContent = 'Show All';
+    if (content) content.innerHTML = renderPrepNoteSection(teamNum, qm);
+    _updateNoteToggleBtn(teamNum, qm);
+};
+
+function _updateNoteToggleBtn(teamNum, qm) {
+    const btn = document.getElementById(`note-toggle-btn-${teamNum}`);
+    if (!btn) return;
+    const hasNote = !!getTeamNote(teamNum, qm)?.text;
+    const isOpen = document.getElementById(`prep-note-section-${teamNum}`)?.style.display !== 'none';
+    btn.textContent = `${hasNote ? 'Note' : 'Notes'} ${isOpen ? '▴' : '▾'}`;
+    btn.style.borderColor = hasNote ? '#3b82f6' : '#334155';
+}
+
+// Note editor wired into the team detail Overview tab (adds/edits general notes only)
+window.showOverviewNoteEditor = function (teamNum) {
+    const section = document.getElementById('overview-notes-section');
+    if (!section) return;
+    const existing = getTeamNote(teamNum, null); // general note
+    const allLines = allNoteDisplayLines(teamNum);
+    const allDisplay = allLines.length
+        ? `<div style="background:#1e293b;padding:10px 14px;border-radius:8px;border:1px solid #334155;color:#cbd5e1;font-size:0.9em;line-height:1.5;white-space:pre-wrap;margin-bottom:10px;">${allLines.join('\n')}</div>`
+        : '';
+    section.innerHTML = `${allDisplay}
+        <div style="color:#64748b;font-size:0.8em;margin-bottom:4px;">General note (not tied to a match)</div>
+        <textarea id="overview-note-ta" style="${NOTE_TA_STYLE}">${existing?.text ?? ''}</textarea>
+        <div style="display:flex;gap:6px;margin-top:6px;">
+            ${NOTE_BTN('Save', '#3b82f6', `saveOverviewNote(${teamNum})`)}
+            ${NOTE_BTN('Cancel', '#334155', `cancelOverviewNote(${teamNum})`)}
+            ${existing?.text ? NOTE_BTN('Delete', '#7f1d1d', `deleteOverviewNote(${teamNum})`) : ''}
+        </div>`;
+    document.getElementById('overview-note-ta')?.focus();
+};
+
+window.saveOverviewNote = function (teamNum) {
+    const text = document.getElementById('overview-note-ta')?.value || '';
+    saveTeamNote(teamNum, text, null); // always saves as general note
+    renderNoteSection(teamNum);
+};
+
+window.cancelOverviewNote = function (teamNum) { renderNoteSection(teamNum); };
+
+window.deleteOverviewNote = function (teamNum) {
+    saveTeamNote(teamNum, '', null); // delete general note only
+    renderNoteSection(teamNum);
+};
+
+function renderNoteSection(teamNum) {
+    const section = document.getElementById('overview-notes-section');
+    if (!section) return;
+    const lines = allNoteDisplayLines(teamNum);
+    const hasGeneral = !!getTeamNote(teamNum, null)?.text;
+    if (lines.length) {
+        section.innerHTML = `<div style="background:#1e293b;padding:14px;border-radius:8px;border:1px solid #334155;color:#cbd5e1;font-size:0.9em;line-height:1.5;white-space:pre-wrap;">${lines.join('\n')}</div>
+            <button onclick="showOverviewNoteEditor(${teamNum})" style="margin-top:8px;background:#334155;color:#f8fafc;border:none;border-radius:6px;padding:6px 14px;font-size:0.82em;font-weight:600;cursor:pointer;">${hasGeneral ? 'Edit General Note' : 'Add General Note'}</button>`;
+    } else {
+        section.innerHTML = `<div style="background:#1e293b;padding:16px;border-radius:8px;border:1px dashed #334155;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+            <p style="color:#475569;font-style:italic;margin:0;font-size:0.9em;">No notes yet.</p>
+            <button onclick="showOverviewNoteEditor(${teamNum})" style="background:#334155;color:#f8fafc;border:none;border-radius:6px;padding:6px 14px;font-size:0.82em;font-weight:600;cursor:pointer;white-space:nowrap;">Add Note</button>
+        </div>`;
+    }
+}
 
 window.loadYTEmbed = function (key, thumbId) {
     const container = document.getElementById(thumbId);
@@ -2186,7 +2403,6 @@ window.viewTeamDetail = async function (teamNumber) {
         return;
     }
 
-    view.style.display = 'block';
     label.innerText = `Team ${teamNumber}: ${team.teamName || ''}`;
 
     // --- FIX: The Safe Check ---
@@ -2338,7 +2554,18 @@ function initUIMode() {
 }
 
 window.switchView = function (viewId, btn) {
-    // In split mode, close the prep panel if it was showing in the right panel.
+    // In split mode, showing the team detail uses pushCurrentRightPanel to save
+    // whatever is open (including matchPrepView) — handle it first, before the
+    // prep-close block below would interfere.
+    if (document.body.classList.contains('split-ui') && viewId === 'teamDetailView') {
+        pushCurrentRightPanel();
+        window.previousView = window.currentView;
+        document.getElementById('teamDetailView').style.display = 'block';
+        updateDetailBackButton();
+        return;
+    }
+
+    // In split mode, close the prep panel when navigating to a main left-panel view.
     if (document.body.classList.contains('split-ui')) {
         const prep = document.getElementById('matchPrepView');
         if (prep && prep.style.display === 'block') {
@@ -2347,16 +2574,6 @@ window.switchView = function (viewId, btn) {
                 document.getElementById('splitRightPanel').style.display = 'flex';
             }
         }
-    }
-
-    // In split mode, showing the team detail just reveals the right panel —
-    // the left (main) view should stay visible and currentView unchanged.
-    if (document.body.classList.contains('split-ui') && viewId === 'teamDetailView') {
-        pushCurrentRightPanel();
-        window.previousView = window.currentView;
-        document.getElementById('teamDetailView').style.display = 'block';
-        updateDetailBackButton();
-        return;
     }
 
     // 1. Hide the current view
@@ -2405,6 +2622,19 @@ window.switchAnalysisTab = function (tab) {
 // ─── TOOLS TAB ──────────────────────────────────────────────────────────────
 
 let currentToolsTab = 'picklist';
+let pickListSortCol = 'composite';
+let pickListSortDir = 1; // 1 = descending (default for all columns)
+
+window.sortPickListBy = function (col) {
+    if (pickListSortCol === col) {
+        pickListSortDir *= -1;
+    } else {
+        pickListSortCol = col;
+        pickListSortDir = 1;
+    }
+    renderPickList();
+};
+
 window.switchToolsTab = function (tab) {
     currentToolsTab = tab;
     ['picklist', 'draft'].forEach(t => {
@@ -2604,6 +2834,42 @@ async function renderPickList() {
     const hasOPR = allTBATeams.length > 0;
     const hasRP = playedMatches.length > 0;
 
+    // Sort unranked rows (after separator) by current sort column
+    {
+        const sepIdx = rows.findIndex(r => r.separator);
+        const ranked = sepIdx >= 0 ? rows.slice(0, sepIdx + 1) : [];
+        const unranked = sepIdx >= 0 ? rows.slice(sepIdx + 1) : [...rows];
+        const getValue = r => {
+            switch (pickListSortCol) {
+                case 'epa': return r.epaVal;
+                case 'opr': return r.opr ?? -999;
+                case 'rp':  return r.rp.rp;
+                default:    return (1 - r.composite) * 100;
+            }
+        };
+        unranked.sort((a, b) => (getValue(b) - getValue(a)) * pickListSortDir);
+        rows = [...ranked, ...unranked];
+    }
+
+    // Rebuild thead with sort arrows
+    const arrowFor = col => {
+        if (pickListSortCol !== col) return `<span style="opacity:0.3"> ↕</span>`;
+        return pickListSortDir === 1 ? ' ↓' : ' ↑';
+    };
+    const th = (label, col, extra = '') =>
+        `<th style="padding:10px 8px;border-bottom:2px solid #334155;color:#94a3b8;text-align:center;cursor:pointer;${extra}" onclick="sortPickListBy('${col}')">${label}${arrowFor(col)}</th>`;
+    table.querySelector('thead').innerHTML = `<tr>
+        <th style="width:28px;padding:10px 4px;border-bottom:2px solid #334155;"></th>
+        <th style="width:56px;padding:10px 8px;border-bottom:2px solid #334155;color:#94a3b8;text-align:center;">#</th>
+        <th style="padding:10px 8px;border-bottom:2px solid #334155;color:#94a3b8;text-align:left;">Team</th>
+        <th style="padding:10px 8px;border-bottom:2px solid #334155;color:#94a3b8;text-align:left;">Name</th>
+        ${th('Score', 'composite')}
+        ${th('RP', 'rp')}
+        ${th('EPA / Ceil', 'epa')}
+        ${th('OPR', 'opr')}
+        <th style="width:60px;padding:10px 8px;border-bottom:2px solid #334155;"></th>
+    </tr>`;
+
     // RP rank (1 = most RP) for top-10 badge
     const rpRankMap = {};
     if (hasRP) {
@@ -2619,7 +2885,7 @@ async function renderPickList() {
     tbody.innerHTML = rows.map(r => {
         if (r.separator) {
             return `<tr data-separator="true" style="user-select:none;">
-                <td colspan="8" class="drag-handle"
+                <td colspan="9" class="drag-handle"
                     style="padding:9px 20px;border-top:2px dashed #334155;border-bottom:2px dashed #334155;background:#080d16;text-align:center;cursor:grab;touch-action:none;color:#475569;font-size:0.8rem;font-weight:700;letter-spacing:0.06em;">
                     ⠿ &nbsp; drag to reposition &nbsp;·&nbsp; unranked below &nbsp; ⠿
                 </td>
@@ -2638,11 +2904,13 @@ async function renderPickList() {
             `<td style="padding:13px 10px;border-bottom:1px solid #1e293b;${center ? ' text-align:center;' : ''}">${content}</td>`;
 
         return `<tr data-team="${team.teamNumber}" style="background:${ts.bg};">
-            <td class="drag-handle" style="padding:13px 10px;border-bottom:1px solid #1e293b;text-align:center;box-shadow:inset 3px 0 0 ${ts.color};">
+            <td class="drag-handle" style="padding:10px 6px;border-bottom:1px solid #1e293b;text-align:center;cursor:grab;touch-action:none;box-shadow:inset 3px 0 0 ${ts.color};">
+                <span style="color:#475569;font-size:1.2em;line-height:1;">⠿</span>
+            </td>
+            <td style="padding:10px 8px;border-bottom:1px solid #1e293b;text-align:center;">
                 <div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
-                    <span style="color:${ts.color};font-size:0.75em;font-weight:800;letter-spacing:0.08em;">${r.tier}</span>
                     <span class="pick-pos" style="color:#64748b;font-weight:700;">${rowPos}</span>
-                    <span style="color:#475569;font-size:1.2em;line-height:1;">⠿</span>
+                    <span style="color:${ts.color};font-size:0.75em;font-weight:800;letter-spacing:0.08em;">${r.tier}</span>
                 </div>
             </td>
             <td style="padding:13px 10px;border-bottom:1px solid #1e293b;cursor:pointer;white-space:nowrap;" onclick="viewTeamDetail(${team.teamNumber})">
@@ -2655,7 +2923,7 @@ async function renderPickList() {
             ${(() => {
                 const rpRank = rpRankMap[String(team.teamNumber)];
                 const rankBadge = rpRank != null && rpRank <= 10
-                    ? `<div style="color:#94a3b8;font-size:0.72em;font-weight:700;margin-top:2px;">#${rpRank} RP</div>` : '';
+                    ? `<div style="color:#94a3b8;font-size:0.72em;font-weight:700;margin-top:2px;">#${rpRank}</div>` : '';
                 return td(`${hasRP ? rp.rp : '—'}${rankBadge}`);
             })()}
             ${td(`${epaVal.toFixed(1)}${ceilBadge}`)}
@@ -3122,6 +3390,9 @@ async function renderOverview(team, tbaTeam) {
             ${card('CCWM', hasTBA ? fmt(tbaTeam.ccwm) : '—', ccwmColor, null, tierCCWM)}
         </div>
 
+        ${sectionLabel('Notes')}
+        <div id="overview-notes-section"></div>
+
         ${sectionLabel('Pit Scouting')}
         ${placeholder('No pit data recorded yet.')}
 
@@ -3129,6 +3400,7 @@ async function renderOverview(team, tbaTeam) {
         ${placeholder('No match observations recorded yet.')}
     `;
 
+    renderNoteSection(team.teamNumber);
     if (!team.photoUrl) fetchAndCacheTeamPhoto(team.teamNumber, photoId, team.eventKey?.slice(0, 4));
 }
 
