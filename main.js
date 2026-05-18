@@ -1,5 +1,6 @@
 import Dexie from 'dexie';
 import Chart from 'chart.js/auto';
+import { getGameConfig, resolveColumnMap, aggregateScoutingData, processScoutingData, fuseScoutingWithTBA, indexObservationsByMatch, detectCumulativeReportingMode, EVENT_SOURCES as SCOUTING_SOURCES } from './games/registry.js';
 
 // 1. DATABASE SETUP
 // We use Dexie to handle larger storage (images/multiple events)
@@ -19,8 +20,22 @@ window.db = db;
 const TBA_BASE = 'https://www.thebluealliance.com/api/v3';
 const TBA_KEY = import.meta.env.VITE_TBA_KEY;
 
+// SCOUTING_SOURCES is imported as EVENT_SOURCES from ./games/registry.js above.
+// To add events, edit the eventSources field in the appropriate games/ config file.
+
 
 window.currentFocusedTeam = null;
+
+function updateAppEventKey(eventKey) {
+    const subtitle = document.getElementById('headerSubtitle');
+    if (eventKey) {
+        if (subtitle) subtitle.textContent = eventKey;
+        document.title = `Nashoba Robotics — ${eventKey}`;
+    } else {
+        if (subtitle) subtitle.textContent = 'Event Hub';
+        document.title = 'Nashoba Robotics — Event Hub';
+    }
+}
 
 // 3. UTILITY FUNCTIONS
 const sleep = (ms) => new Promise(res => setTimeout(res, ms));
@@ -68,6 +83,75 @@ function saveTeamNote(teamNumber, text, qm = null) {
     if (Object.keys(map).length === 0) delete all[teamKey];
     else all[teamKey] = map;
     localStorage.setItem('teamNotes', JSON.stringify(all));
+}
+
+// ── Scouting data helpers ─────────────────────────────────────────────────────
+
+// Returns the source URL for an event: checks SCOUTING_SOURCES first, then a
+// per-device localStorage override (saved when the user pastes a URL manually).
+function getScoutingSource(eventKey) {
+    if (!eventKey) return null;
+    const entry = SCOUTING_SOURCES[eventKey];
+    if (entry?.url) return entry.url;
+    if (typeof entry === 'string') return entry; // legacy string form
+    return localStorage.getItem(`scoutingSheetUrl_${eventKey}`) || null;
+}
+
+function getPitSource(eventKey) {
+    if (!eventKey) return null;
+    return SCOUTING_SOURCES[eventKey]?.pitUrl || localStorage.getItem(`pitSheetUrl_${eventKey}`) || null;
+}
+
+// Returns any per-event column name overrides defined in SCOUTING_SOURCES.
+function getScoutingColumnOverrides(eventKey) {
+    return SCOUTING_SOURCES[eventKey]?.columnOverrides || {};
+}
+
+// Returns aggregated scouting stats for all teams at an event, or null if no
+// raw data or no game config exists for that event key.
+function getScoutingStats(eventKey) {
+    const raw = localStorage.getItem(`scoutingData_${eventKey}`);
+    if (!raw) return null;
+    return aggregateScoutingData(eventKey, JSON.parse(raw), getScoutingColumnOverrides(eventKey));
+}
+
+// Returns scout comments for one team at an event, sorted by match number.
+// Each entry: { matchNumber, text }
+function getScoutingComments(teamNumber, eventKey) {
+    if (!eventKey) return [];
+    const raw = localStorage.getItem(`scoutingData_${eventKey}`);
+    if (!raw) return [];
+    const result = processScoutingData(eventKey, JSON.parse(raw), getScoutingColumnOverrides(eventKey));
+    if (!result) return [];
+    return (result.byTeam[String(teamNumber)] || [])
+        .filter(r => r.comments)
+        .map(r => ({ matchNumber: r.matchNumber, text: r.comments }))
+        .sort((a, b) => a.matchNumber - b.matchNumber);
+}
+
+// RFC-4180-compliant CSV parser. Handles quoted fields containing commas/newlines.
+function parseCSV(text) {
+    const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim());
+    if (lines.length < 2) return [];
+    function parseLine(line) {
+        const fields = [];
+        let cur = '', inQ = false;
+        for (let i = 0; i < line.length; i++) {
+            const c = line[i];
+            if (c === '"') { if (inQ && line[i + 1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
+            else if (c === ',' && !inQ) { fields.push(cur); cur = ''; }
+            else cur += c;
+        }
+        fields.push(cur);
+        return fields;
+    }
+    const headers = parseLine(lines[0]).map(h => h.trim());
+    return lines.slice(1).map(line => {
+        const vals = parseLine(line);
+        const obj = {};
+        headers.forEach((h, i) => { obj[h] = (vals[i] ?? '').trim(); });
+        return obj;
+    });
 }
 
 const TIER_BG  = { S: '#f59e0b', A: '#4ade80', B: '#a855f7', C: '#64748b' };
@@ -710,17 +794,39 @@ window.deleteOverviewNote = function (teamNum) {
 function renderNoteSection(teamNum) {
     const section = document.getElementById('overview-notes-section');
     if (!section) return;
-    const lines = allNoteDisplayLines(teamNum);
+
+    const userLines  = allNoteDisplayLines(teamNum);
     const hasGeneral = !!getTeamNote(teamNum, null)?.text;
-    if (lines.length) {
-        section.innerHTML = `<div style="background:#1e293b;padding:14px;border-radius:8px;border:1px solid #334155;color:#cbd5e1;font-size:0.9em;line-height:1.5;white-space:pre-wrap;">${lines.join('\n')}</div>
-            <button onclick="showOverviewNoteEditor(${teamNum})" style="margin-top:8px;background:#334155;color:#f8fafc;border:none;border-radius:6px;padding:6px 14px;font-size:0.82em;font-weight:600;cursor:pointer;">${hasGeneral ? 'Edit General Note' : 'Add General Note'}</button>`;
-    } else {
-        section.innerHTML = `<div style="background:#1e293b;padding:16px;border-radius:8px;border:1px dashed #334155;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+    const eventKey   = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    const scoutComments = getScoutingComments(teamNum, eventKey);
+
+    // Build user notes block
+    const userBlock = userLines.length
+        ? `<div style="margin-bottom:10px;">
+               <div style="color:#60a5fa;font-size:0.72em;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">Your Notes</div>
+               <div style="background:#1e293b;padding:12px 14px;border-radius:8px;border:1px solid #334155;color:#cbd5e1;font-size:0.9em;line-height:1.5;white-space:pre-wrap;">${userLines.join('\n')}</div>
+           </div>`
+        : '';
+
+    // Build scout comments block (read-only)
+    const scoutBlock = scoutComments.length
+        ? `<div style="margin-bottom:10px;">
+               <div style="color:#a78bfa;font-size:0.72em;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">Scout Observations</div>
+               <div style="background:#1e293b;padding:12px 14px;border-radius:8px;border:1px solid #334155;color:#cbd5e1;font-size:0.9em;line-height:1.5;">
+                   ${scoutComments.map(c => `<div style="padding:4px 0;border-bottom:1px solid #1e293b;"><span style="color:#64748b;font-size:0.85em;margin-right:8px;">QM ${c.matchNumber}</span>${c.text}</div>`).join('')}
+               </div>
+           </div>`
+        : '';
+
+    const hasAnything = userLines.length || scoutComments.length;
+
+    section.innerHTML = `
+        ${userBlock}
+        ${scoutBlock}
+        ${!hasAnything ? `<div style="background:#1e293b;padding:16px;border-radius:8px;border:1px dashed #334155;display:flex;align-items:center;justify-content:space-between;gap:12px;">
             <p style="color:#475569;font-style:italic;margin:0;font-size:0.9em;">No notes yet.</p>
             <button onclick="showOverviewNoteEditor(${teamNum})" style="background:#334155;color:#f8fafc;border:none;border-radius:6px;padding:6px 14px;font-size:0.82em;font-weight:600;cursor:pointer;white-space:nowrap;">Add Note</button>
-        </div>`;
-    }
+        </div>` : `<button onclick="showOverviewNoteEditor(${teamNum})" style="background:#334155;color:#f8fafc;border:none;border-radius:6px;padding:6px 14px;font-size:0.82em;font-weight:600;cursor:pointer;">${hasGeneral ? 'Edit General Note' : 'Add General Note'}</button>`}`;
 }
 
 window.loadYTEmbed = function (key, thumbId) {
@@ -1153,6 +1259,362 @@ window.toggleAutoSync = function () {
 
 
 
+// ── Scouting data sync ────────────────────────────────────────────────────────
+
+let _scoutingAutoSyncTimer = null;
+let _scoutingAutoSyncTick  = null;
+let _scoutingAutoSyncCountdown = 0;
+
+function _updateScoutingAutoSyncStatus() {
+    const el = document.getElementById('scoutingAutoSyncStatus');
+    if (!el) return;
+    const m = Math.floor(_scoutingAutoSyncCountdown / 60);
+    const s = String(_scoutingAutoSyncCountdown % 60).padStart(2, '0');
+    el.textContent = `Next sync in ${m}:${s}`;
+}
+
+// Imports a parsed archive bundle into localStorage + IndexedDB.
+// Returns a summary string.
+async function importArchiveBundle(data, eventKey) {
+    localStorage.removeItem(`scoutingFusedStats_${eventKey}`);
+    if (!Array.isArray(data) && Array.isArray(data.scoutingRows)) {
+        localStorage.setItem(`scoutingData_${eventKey}`, JSON.stringify(data.scoutingRows));
+        if (data.pitRows?.length) localStorage.setItem(`pitData_${eventKey}`, JSON.stringify(data.pitRows));
+        if (data.teams?.length)    await db.teams.bulkPut(data.teams);
+        if (data.tbaTeams?.length) await db.tbaTeams.bulkPut(data.tbaTeams);
+        if (data.matches?.length)  await db.matches.bulkPut(data.matches);
+        return `Archive loaded: ${data.scoutingRows.length} rows + ${data.teams?.length || 0} teams + ${data.matches?.length || 0} matches`;
+    } else {
+        localStorage.setItem(`scoutingData_${eventKey}`, JSON.stringify(data));
+        return `${data.length} rows loaded`;
+    }
+}
+
+// Checks for a public archive file for the given event key and updates #archiveHint.
+let _archiveCheckTimer = null;
+async function checkEventArchive(eventKey) {
+    const hint = document.getElementById('archiveHint');
+    if (!hint) return;
+    if (!eventKey || eventKey.length < 6) { hint.innerHTML = ''; return; }
+
+    const url = `${import.meta.env.BASE_URL}scouting/${eventKey}_archive.json`;
+    try {
+        const resp = await fetch(url, { method: 'HEAD' });
+        const ct = resp.headers.get('content-type') || '';
+        // Vite's SPA fallback returns 200 with text/html for missing paths — reject those
+        if (resp.ok && ct.includes('json')) {
+            hint.innerHTML = `<button onclick="loadEventArchive('${eventKey}')" style="background:#1e3a5f;color:#60a5fa;border:1px solid #3b82f6;font-size:0.82em;padding:6px 12px;">↓ Load Archived Data</button>`;
+        } else {
+            hint.innerHTML = `<span style="color:#475569;font-size:0.8em;">No archive available</span>`;
+        }
+    } catch {
+        hint.innerHTML = `<span style="color:#475569;font-size:0.8em;">No archive available</span>`;
+    }
+}
+
+window.loadEventArchive = async function (eventKey) {
+    if (!eventKey) eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    if (!eventKey) { alert('No event key — type one in the Event Key field first.'); return; }
+
+    const url = `${import.meta.env.BASE_URL}scouting/${eventKey}_archive.json`;
+    const hint = document.getElementById('archiveHint');
+    if (hint) hint.innerHTML = `<span style="color:#64748b;font-size:0.82em;">Loading…</span>`;
+    try {
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        const summary = await importArchiveBundle(data, eventKey);
+
+        // Restore event key to the input so subsequent actions work
+        const keyInput = document.getElementById('eventKeyInput');
+        if (keyInput) keyInput.value = eventKey;
+        localStorage.setItem('lastEventKey', eventKey);
+        updateAppEventKey(eventKey);
+
+        // Set sync timestamps for all bundled data sources so the Home tab shows them as synced
+        const archiveTime = data.archived ? new Date(data.archived).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const archiveLabel = `Archive (${archiveTime})`;
+        for (const key of ['statboticsLive', 'tbaOPR', 'tbaMatches', 'scoutingData']) {
+            localStorage.setItem(`lastSync_${key}`, archiveLabel);
+            const el = document.getElementById(`ts-${key}`);
+            if (el) el.textContent = `Last sync: ${archiveLabel}`;
+        }
+
+        if (hint) hint.innerHTML = `<span style="color:#4ade80;font-size:0.82em;">✓ ${summary}</span>`;
+
+        // Refresh all display surfaces
+        renderScoutingSection();
+        await Promise.all([
+            displayTeams(),
+            displaySchedule(),
+            displayTBATeams(),
+        ]);
+        await renderAtAGlance();
+        displayScoutingTeams();
+        renderPickList();
+        renderDraft();
+    } catch (err) {
+        if (hint) hint.innerHTML = `<span style="color:#ef4444;font-size:0.82em;">Error: ${err.message}</span>`;
+    }
+};
+
+window.syncScoutingData = async function () {
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    if (!eventKey) { alert('Enter an Event Key first.'); return; }
+    const source = getScoutingSource(eventKey);
+    if (!source) { alert('No scouting sheet source configured for this event.'); return; }
+
+    const statusEl = document.getElementById('scouting-sync-status');
+    if (statusEl) statusEl.textContent = 'Syncing…';
+
+    try {
+        const resp = await fetch(source);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = source.endsWith('.json') ? await resp.json() : parseCSV(await resp.text());
+        const now = new Date().toLocaleTimeString();
+        localStorage.setItem('lastSync_scoutingData', now);
+        const summary = await importArchiveBundle(data, eventKey);
+        if (statusEl) statusEl.textContent = summary.startsWith('Archive') ? summary : `Last sync: ${now} · ${summary}`;
+        renderScoutingSection();
+    } catch (err) {
+        const msg = err.message === 'Failed to fetch'
+            ? 'Failed to fetch — check that the sheet is shared publicly (Anyone with the link → Viewer)'
+            : `Error: ${err.message}`;
+        if (statusEl) statusEl.textContent = msg;
+    }
+};
+
+window.toggleScoutingAutoSync = function () {
+    if (_scoutingAutoSyncTimer) {
+        clearInterval(_scoutingAutoSyncTimer);
+        clearInterval(_scoutingAutoSyncTick);
+        _scoutingAutoSyncTimer = _scoutingAutoSyncTick = null;
+        const btn = document.getElementById('scoutingAutoSyncBtn');
+        const sel = document.getElementById('scoutingAutoSyncInterval');
+        const sts = document.getElementById('scoutingAutoSyncStatus');
+        if (btn) { btn.textContent = 'Start Auto-Sync'; btn.style.background = '#059669'; }
+        if (sel) sel.disabled = false;
+        if (sts) sts.textContent = '';
+    } else {
+        const minutes = parseInt(document.getElementById('scoutingAutoSyncInterval')?.value || '5', 10);
+        const total = minutes * 60;
+        _scoutingAutoSyncCountdown = total;
+        const _runScoutingAutoSync = () => {
+            const ek = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+            window.syncScoutingData();
+            if (ek) _syncPitDataForEvent(ek);
+        };
+        _runScoutingAutoSync();
+        _scoutingAutoSyncTimer = setInterval(() => {
+            _scoutingAutoSyncCountdown = total;
+            _runScoutingAutoSync();
+        }, total * 1000);
+        _scoutingAutoSyncTick = setInterval(() => {
+            _scoutingAutoSyncCountdown = Math.max(0, _scoutingAutoSyncCountdown - 1);
+            _updateScoutingAutoSyncStatus();
+        }, 1000);
+        const btn = document.getElementById('scoutingAutoSyncBtn');
+        const sel = document.getElementById('scoutingAutoSyncInterval');
+        if (btn) { btn.textContent = 'Stop Auto-Sync'; btn.style.background = '#ef4444'; }
+        if (sel) sel.disabled = true;
+        _updateScoutingAutoSyncStatus();
+    }
+};
+
+function sheetsInputToCsvUrl(input) {
+    // Accept: bare sheet ID, any Google Sheets URL (edit/view/pub), or existing CSV export URL
+    const idMatch = input.match(/\/spreadsheets\/d\/([A-Za-z0-9_-]+)/);
+    const id = idMatch ? idMatch[1] : input.replace(/\s/g, '');
+    if (!id) return null;
+    // Preserve gid if present in the pasted URL (query param or fragment), otherwise default to first sheet (gid=0)
+    const gidMatch = input.match(/[?&#]gid=(\d+)/);
+    const gid = gidMatch ? gidMatch[1] : '0';
+    return `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${gid}`;
+}
+
+window.saveScoutingSheetUrl = function () {
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    const raw = document.getElementById('scoutingUrlInput')?.value.trim();
+    if (!raw || !eventKey) return;
+    const url = sheetsInputToCsvUrl(raw);
+    if (!url) return;
+    localStorage.setItem(`scoutingSheetUrl_${eventKey}`, url);
+    renderScoutingSection();
+};
+
+window.savePitSheetUrl = function () {
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    const raw = document.getElementById('pitUrlInput')?.value.trim();
+    if (!raw || !eventKey) return;
+    const url = sheetsInputToCsvUrl(raw);
+    if (!url) return;
+    localStorage.setItem(`pitSheetUrl_${eventKey}`, url);
+    renderScoutingSection();
+};
+
+async function _syncPitDataForEvent(eventKey) {
+    const source = getPitSource(eventKey);
+    if (!source) return; // no pit source — skip silently
+    const statusEl = document.getElementById('pit-sync-status');
+    if (statusEl) statusEl.textContent = 'Syncing…';
+    try {
+        const resp = await fetch(source);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const rows = parseCSV(await resp.text());
+        const now = new Date().toLocaleTimeString();
+        localStorage.setItem(`pitData_${eventKey}`, JSON.stringify(rows));
+        localStorage.setItem(`lastSync_pitData`, now);
+        if (statusEl) statusEl.textContent = `Last sync: ${now} · ${rows.length} teams`;
+        renderScoutingSection();
+    } catch (err) {
+        const msg = err.message === 'Failed to fetch'
+            ? 'Failed to fetch — check that the sheet is shared publicly (Anyone with the link → Viewer)'
+            : `Error: ${err.message}`;
+        if (statusEl) statusEl.textContent = msg;
+    }
+}
+
+window.syncPitData = async function () {
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    if (!eventKey) { alert('Enter an Event Key first.'); return; }
+    if (!getPitSource(eventKey)) { alert('No pit scouting sheet configured for this event.'); return; }
+    await _syncPitDataForEvent(eventKey);
+};
+
+window.saveScoutingArchive = async function () {
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    if (!eventKey) { alert('Enter an event key first.'); return; }
+    const raw = localStorage.getItem(`scoutingData_${eventKey}`);
+
+    const [teams, tbaTeams, matches] = await Promise.all([
+        db.teams.where('eventKey').equals(eventKey).toArray(),
+        db.tbaTeams.where('eventKey').equals(eventKey).toArray(),
+        db.matches.where('eventKey').equals(eventKey).toArray(),
+    ]);
+
+    const pitRaw = localStorage.getItem(`pitData_${eventKey}`);
+    const bundle = {
+        eventKey,
+        archived: new Date().toISOString(),
+        scoutingRows: JSON.parse(raw),
+        pitRows: pitRaw ? JSON.parse(pitRaw) : null,
+        teams: teams.map(({ photoUrl: _, ...rest }) => rest),
+        tbaTeams,
+        matches,
+    };
+
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' }));
+    a.download = `${eventKey}_archive.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+};
+
+function renderScoutingSection() {
+    const container = document.getElementById('scouting-data-section');
+    if (!container) return;
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+
+    if (!eventKey) {
+        container.innerHTML = `<p style="color:#475569;font-size:0.85em;margin:0;">Enter an event key above to configure scouting data.</p>`;
+        return;
+    }
+
+    const source    = getScoutingSource(eventKey);
+    const isLive    = source?.startsWith('http');
+    const hasData   = !!localStorage.getItem(`scoutingData_${eventKey}`);
+    const lastSync  = localStorage.getItem('lastSync_scoutingData');
+    const gameConfig = getGameConfig(eventKey);
+    const noConfig  = !gameConfig;
+
+    if (!source) {
+        container.innerHTML = `
+            <p style="color:#64748b;font-size:0.85em;margin:0 0 10px;">No sheet configured for <strong style="color:#f8fafc;">${eventKey}</strong>.</p>
+            <div style="display:flex;flex-direction:column;gap:10px;">
+                <div>
+                    <div style="color:#94a3b8;font-size:0.75em;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:6px;">Match Scouting</div>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <input type="text" id="scoutingUrlInput" placeholder="Sheet ID or Google Sheets URL"
+                            style="flex:1;min-width:260px;padding:8px 10px;border-radius:4px;border:1px solid #334155;background:#0f172a;color:#f8fafc;font-size:0.85em;">
+                        <button onclick="saveScoutingSheetUrl()">Save</button>
+                    </div>
+                </div>
+                <div>
+                    <div style="color:#94a3b8;font-size:0.75em;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:6px;">Pit Scouting</div>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <input type="text" id="pitUrlInput" placeholder="Sheet ID or Google Sheets URL"
+                            style="flex:1;min-width:260px;padding:8px 10px;border-radius:4px;border:1px solid #334155;background:#0f172a;color:#f8fafc;font-size:0.85em;">
+                        <button onclick="savePitSheetUrl()">Save</button>
+                    </div>
+                </div>
+            </div>`;
+        return;
+    }
+
+    const matchBadge = isLive
+        ? `<span style="color:#34d399;font-size:0.78em;font-weight:700;">● Live Sheet</span>`
+        : `<span style="color:#60a5fa;font-size:0.78em;font-weight:700;">● Archive</span>`;
+    const gameLabel = noConfig
+        ? `<span style="color:#fbbf24;font-size:0.78em;">⚠ No game config for ${eventKey.match(/^\d{4}/)?.[0] ?? '?'}</span>`
+        : `<span style="color:#64748b;font-size:0.78em;">Game: <strong style="color:#94a3b8;">${gameConfig.name} ${gameConfig.year}</strong></span>`;
+
+    const pitSource    = getPitSource(eventKey);
+    const hasPitData   = !!localStorage.getItem(`pitData_${eventKey}`);
+    const pitLastSync  = localStorage.getItem('lastSync_pitData');
+    const syncStatus    = lastSync && hasData ? `Last sync: ${lastSync}` : hasData ? 'Data loaded' : 'No data yet';
+    const pitSyncStatus = pitLastSync && hasPitData ? `Last sync: ${pitLastSync}` : hasPitData ? 'Data loaded' : 'No data yet';
+
+    const pitBlock = pitSource
+        ? `<div style="display:flex;flex-direction:column;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid #1e293b;">
+               <div style="display:flex;align-items:center;gap:8px;">
+                   <span style="color:#64748b;font-size:0.85em;min-width:100px;">Pit Scouting</span>
+                   <span style="color:#34d399;font-size:0.78em;font-weight:700;">● Configured</span>
+               </div>
+               <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+                   <button onclick="syncPitData()">Sync Pit Data</button>
+                   ${hasPitData ? `<button onclick="clearPitData()" style="background:#7f1d1d;color:#fca5a5;">Clear Pit Data</button>` : ''}
+                   <span id="pit-sync-status" style="color:#475569;font-size:0.78em;">${pitSyncStatus}</span>
+               </div>
+           </div>`
+        : `<div style="margin-top:10px;padding-top:10px;border-top:1px solid #1e293b;">
+               <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                   <span style="color:#64748b;font-size:0.85em;min-width:100px;">Pit Scouting</span>
+                   <input type="text" id="pitUrlInput" placeholder="Sheet ID or Google Sheets URL"
+                       style="flex:1;min-width:220px;padding:8px 10px;border-radius:4px;border:1px solid #334155;background:#0f172a;color:#f8fafc;font-size:0.85em;">
+                   <button onclick="savePitSheetUrl()">Save</button>
+               </div>
+           </div>`;
+
+    container.innerHTML = `
+        <div style="margin-bottom:12px;">
+            <div style="display:flex;flex-direction:column;gap:6px;">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <span style="color:#64748b;font-size:0.85em;min-width:100px;">Match Scouting</span>
+                    ${matchBadge}
+                    ${gameLabel}
+                </div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+                    <button onclick="syncScoutingData()">Sync Match Data</button>
+                    ${hasData ? `<button onclick="clearScoutingData()" style="background:#7f1d1d;color:#fca5a5;">Clear Match Data</button>` : ''}
+                    <span id="scouting-sync-status" style="color:#475569;font-size:0.78em;">${syncStatus}</span>
+                </div>
+            </div>
+            ${pitBlock}
+        </div>
+        ${isLive ? `
+        <div style="padding-top:10px;border-top:1px solid #1e293b;">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                <button id="scoutingAutoSyncBtn" onclick="toggleScoutingAutoSync()" style="background:#059669;">Start Auto-Sync</button>
+                <select id="scoutingAutoSyncInterval" style="padding:7px 10px;border-radius:4px;border:1px solid #334155;background:#1e293b;color:#f8fafc;font-size:0.9rem;cursor:pointer;">
+                    <option value="5">Every 5 min</option>
+                    <option value="7">Every 7 min</option>
+                    <option value="10">Every 10 min</option>
+                </select>
+                <span id="scoutingAutoSyncStatus" style="color:#94a3b8;font-size:0.85em;font-variant-numeric:tabular-nums;"></span>
+            </div>
+        </div>` : ''}`;
+}
+
 window.clearCache = async function () {
     if (!confirm("Are you sure you want to clear all cached team data? This cannot be undone.")) {
         return;
@@ -1165,6 +1627,7 @@ window.clearCache = async function () {
 
         // Clear persisted sync state
         localStorage.removeItem('lastEventKey');
+        updateAppEventKey(null);
         localStorage.removeItem('pickListOrder');
         localStorage.removeItem('draftState');
         for (const key of ['statboticsLive', 'tbaOPR', 'tbaMatches']) {
@@ -1190,6 +1653,25 @@ window.clearCache = async function () {
     }
 };
 
+window.clearScoutingData = function () {
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    if (!eventKey) return;
+    if (!confirm(`Clear scouting data for ${eventKey}? This cannot be undone.`)) return;
+    localStorage.removeItem(`scoutingData_${eventKey}`);
+    localStorage.removeItem(`scoutingFusedStats_${eventKey}`);
+    localStorage.removeItem('lastSync_scoutingData');
+    renderScoutingSection();
+    displayScoutingTeams();
+};
+
+window.clearPitData = function () {
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    if (!eventKey) return;
+    if (!confirm(`Clear pit scouting data for ${eventKey}? This cannot be undone.`)) return;
+    localStorage.removeItem(`pitData_${eventKey}`);
+    localStorage.removeItem('lastSync_pitData');
+    renderScoutingSection();
+};
 
 
 
@@ -1585,7 +2067,7 @@ window.displayTeams = async function () {
         row.style.cursor = 'pointer';
 
         // 2. Attach the click event to the entire row safely
-        row.onclick = () => viewTeamDetail(team.teamNumber);
+        row.onclick = () => viewTeamDetail(team.teamNumber, 'epa-opr');
 
         // Notice we removed the onclick="" from the <td> string
         row.innerHTML = `
@@ -1966,7 +2448,7 @@ window.displayTBATeams = async function () {
         row.style.backgroundColor = TIER_STYLE[tier].bg;
         row.style.borderLeft = `6px solid ${TIER_STYLE[tier].color}`;
         row.style.cursor = 'pointer';
-        row.onclick = () => viewTeamDetail(team.teamNumber);
+        row.onclick = () => viewTeamDetail(team.teamNumber, 'epa-opr');
         const oprCell = team.ignoredMatchKey
             ? `${eff.toFixed(1)}&thinsp;<span style="color:#fbbf24; font-size:0.7em; font-weight:600;">LOO</span>`
             : eff.toFixed(1);
@@ -1991,7 +2473,8 @@ let glanceSortOrder = 1; // 1 = descending
 
 window.switchHomeTab = function (tab) {
     ['setup', 'overview'].forEach(t => {
-        document.getElementById(`home-tab-${t}`).style.display = t === tab ? 'block' : 'none';
+        const display = t === tab ? (t === 'setup' ? 'grid' : 'block') : 'none';
+        document.getElementById(`home-tab-${t}`).style.display = display;
     });
     document.querySelectorAll('#homeTabs .detail-tab-btn').forEach((btn, i) => {
         btn.classList.toggle('active', ['setup', 'overview'][i] === tab);
@@ -2080,6 +2563,30 @@ async function renderAtAGlance() {
         }
     }
 
+    // ── Scouting EPA ─────────────────────────────────────────────────────────
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    const scoutEPAMap = {};
+    if (eventKey) {
+        const rawStr = localStorage.getItem(`scoutingData_${eventKey}`);
+        if (rawStr) {
+            const fusedCache = (() => { try { return JSON.parse(localStorage.getItem(`scoutingFusedStats_${eventKey}`)); } catch { return null; } })();
+            const processed = processScoutingData(eventKey, JSON.parse(rawStr), getScoutingColumnOverrides(eventKey));
+            if (processed?.config?.computeEPABreakdown) {
+                const { config, byTeam } = processed;
+                for (const [tn, rawRows] of Object.entries(byTeam)) {
+                    const { rows: deduped } = deduplicateTeamRows(rawRows);
+                    const rawStats = config.aggregateTeam(deduped);
+                    const fusedResult = fusedCache?.teams?.[tn];
+                    const isFused = !!(fusedResult?.available && config.computeFusedEPABreakdown);
+                    const breakdown = isFused
+                        ? config.computeFusedEPABreakdown(fusedResult.stats)
+                        : config.computeEPABreakdown(rawStats);
+                    scoutEPAMap[tn] = { total: breakdown.total, isFused };
+                }
+            }
+        }
+    }
+
     // ── Build rows ────────────────────────────────────────────────────────────
     const rows = allTeams.map(team => {
         const tn = parseInt(team.teamNumber);
@@ -2091,7 +2598,9 @@ async function renderAtAGlance() {
         const epaVal = hasCeil ? parseFloat(analysis.ceiling) : (team.currentEPA || 0);
         const hasLOO = tba?.ignoredMatchKey && tba.adjustedOPR != null && !globalIgnored.has(tba.ignoredMatchKey);
         const hasAdj = !hasLOO && globalOPRMap != null;
-        return { team, tba, rp, opr, epaVal, hasCeil, hasLOO, hasAdj };
+        const scoutData = scoutEPAMap[tn];
+        return { team, tba, rp, opr, epaVal, hasCeil, hasLOO, hasAdj,
+                 scoutEPA: scoutData?.total ?? null, scoutFused: scoutData?.isFused ?? false };
     });
 
     const hasOPR = allTBATeams.length > 0;
@@ -2108,11 +2617,14 @@ async function renderAtAGlance() {
         };
         const epaVals = rows.map(r => r.epaVal);
         const oprVals = rows.map(r => r.opr ?? 0);
+        const scoutEPAVals = rows.map(r => r.scoutEPA ?? 0);
         const hasAnyOPR = rows.some(r => r.opr != null);
+        const hasAnyScout = rows.some(r => r.scoutEPA != null);
         const composite = r => {
-            const ep = pctRank(epaVals, r.epaVal);
-            if (!hasAnyOPR) return ep;
-            return (ep + pctRank(oprVals, r.opr ?? 0)) / 2;
+            const sources = [pctRank(epaVals, r.epaVal)];
+            if (hasAnyOPR)   sources.push(pctRank(oprVals, r.opr ?? 0));
+            if (hasAnyScout) sources.push(pctRank(scoutEPAVals, r.scoutEPA ?? 0));
+            return sources.reduce((a, b) => a + b, 0) / sources.length;
         };
         rows.forEach(r => { r.composite = composite(r); });
         const tierOrder = [...rows].sort((a, b) => a.composite - b.composite);
@@ -2131,6 +2643,7 @@ async function renderAtAGlance() {
         switch (glanceSortColumn) {
             case 'epa': va = a.epaVal; vb = b.epaVal; break;
             case 'opr': va = a.opr ?? -999; vb = b.opr ?? -999; break;
+            case 'scoutEPA': va = a.scoutEPA ?? -999; vb = b.scoutEPA ?? -999; break;
             case 'composite': va = -a.composite; vb = -b.composite; break;
             default: va = a.rp.rp; vb = b.rp.rp; break;
         }
@@ -2146,7 +2659,7 @@ async function renderAtAGlance() {
 
     table.style.display = 'table';
     tbody.innerHTML = rows.map(r => {
-        const { team, rp, opr, epaVal, hasCeil, hasLOO, hasAdj, composite } = r;
+        const { team, rp, opr, epaVal, hasCeil, hasLOO, hasAdj, composite, scoutEPA, scoutFused } = r;
         const rank = hasRP ? rpRank[team.teamNumber] : '—';
         const record = hasRP ? `${rp.wins}–${rp.losses}${rp.ties ? `–${rp.ties}` : ''}` : null;
         const rpStr = hasRP ? rp.rp : '—';
@@ -2160,6 +2673,9 @@ async function renderAtAGlance() {
             : hasAdj
                 ? `<span style="color:#f97316; font-size:0.65em; font-weight:600; margin-left:3px;">ADJ</span>`
                 : '';
+        const scoutStr = scoutEPA != null ? scoutEPA.toFixed(1) : '—';
+        const fusedBadge = scoutFused
+            ? `<span style="color:#818cf8; font-size:0.65em; font-weight:600; margin-left:3px;">F</span>` : '';
 
         const tier = r.tier;
         const ts = TIER[tier];
@@ -2186,6 +2702,7 @@ async function renderAtAGlance() {
             ${td(`${rpStr}${record ? `<div style="color:#94a3b8;font-size:0.75em;font-weight:600;margin-top:2px;white-space:nowrap;">${record}</div>` : ''}`)}
             ${td(`${epaStr}${ceilBadge}`)}
             ${td(hasOPR ? `${oprStr}${oprBadge}` : '—')}
+            ${td(`${scoutStr}${fusedBadge}`)}
         </tr>`;
     }).join('');
 
@@ -2389,7 +2906,7 @@ window.setGloballyIgnored = async function (matchKey, ignored) {
     }
 };
 
-window.viewTeamDetail = async function (teamNumber) {
+window.viewTeamDetail = async function (teamNumber, tab = 'overview') {
     activeTeamNumber = teamNumber; // <--- ADD THIS LINE
     const team = await db.teams.get(teamNumber);
     if (!team) return;
@@ -2426,7 +2943,7 @@ window.viewTeamDetail = async function (teamNumber) {
 
     activeTeamData = team;
     activeTBAData = await db.tbaTeams.get(teamNumber) || await db.tbaTeams.get(parseInt(teamNumber));
-    switchDetailTab('overview');
+    switchDetailTab(tab);
 
     window.switchView('teamDetailView');
     pushNavState('teamDetail');
@@ -2617,7 +3134,540 @@ window.switchAnalysisTab = function (tab) {
     document.querySelectorAll('#analysisTabs .detail-tab-btn').forEach((btn, i) => {
         btn.classList.toggle('active', ['statbotics', 'tba', 'scouting'][i] === tab);
     });
+    if (tab === 'scouting') {
+        displayScoutingTeams();   // immediate render from cache or raw scouting
+        computeScoutingFusion();  // async — re-renders when fusion completes
+    }
 };
+
+// ─── SCOUTING ANALYSIS TAB ──────────────────────────────────────────────────
+
+let scoutingChartInstance = null;
+let scoutingSortCol = 'total';
+let scoutingSortDir = 1;
+
+window.sortScoutingBy = function (col) {
+    if (scoutingSortCol === col) scoutingSortDir *= -1;
+    else { scoutingSortCol = col; scoutingSortDir = col === 'teamNumber' ? -1 : 1; }
+    displayScoutingTeams();
+};
+
+function renderScoutingChart(rows) {
+    const ctx = document.getElementById('scoutingComparisonChart').getContext('2d');
+    if (scoutingChartInstance) scoutingChartInstance.destroy();
+    const isMobile = document.body.classList.contains('mobile-ui');
+    const labels = rows.map(r => r.teamNumber);
+    scoutingChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [
+                { label: 'Auto',    data: rows.map(r => r.auto.toFixed(1)),    backgroundColor: '#f59e0b', stack: 'epa' },
+                { label: 'Teleop',  data: rows.map(r => r.teleop.toFixed(1)),  backgroundColor: '#3b82f6', stack: 'epa' },
+                { label: 'Endgame', data: rows.map(r => r.endgame.toFixed(1)), backgroundColor: '#10b981', stack: 'epa' },
+            ],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: { stacked: true, grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 10 } } },
+                y: { stacked: true, beginAtZero: true, grid: { color: '#334155' }, ticks: { color: '#94a3b8' },
+                     title: { display: true, text: 'Scouting EPA (pts/match)', color: '#94a3b8' } },
+            },
+            plugins: {
+                legend: { position: 'top', labels: { color: '#f8fafc', usePointStyle: true } },
+                tooltip: { mode: 'index', intersect: false },
+            },
+        },
+    });
+}
+
+window.computeScoutingFusion = async function () {
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    if (!eventKey) return;
+    const statusEl = document.getElementById('scouting-fusion-status');
+
+    const rawStr = localStorage.getItem(`scoutingData_${eventKey}`);
+    if (!rawStr) { if (statusEl) statusEl.textContent = 'No scouting data to fuse.'; return; }
+
+    if (statusEl) statusEl.textContent = 'Computing…';
+
+    const tbaMatches = await db.matches.where('eventKey').equals(eventKey).toArray();
+    if (!tbaMatches.some(m => m.redBreakdown)) {
+        if (statusEl) statusEl.textContent = 'No TBA breakdowns — run "Sync TBA Matches" first.';
+        return;
+    }
+
+    const processed = processScoutingData(eventKey, JSON.parse(rawStr), getScoutingColumnOverrides(eventKey));
+    if (!processed) { if (statusEl) statusEl.textContent = 'No game config for this event.'; return; }
+
+    const { config, byTeam, observations } = processed;
+    const allByMatch = indexObservationsByMatch(observations);
+    const teams = {};
+
+    for (const [teamNumber, rawRows] of Object.entries(byTeam)) {
+        const { rows } = deduplicateTeamRows(rawRows);
+        teams[teamNumber] = fuseScoutingWithTBA(teamNumber, rows, allByMatch, tbaMatches, config);
+    }
+
+    const fusedCount = Object.values(teams).filter(r => r.available).length;
+    const now = new Date().toLocaleTimeString();
+    localStorage.setItem(`scoutingFusedStats_${eventKey}`, JSON.stringify({ computed: now, teams }));
+    if (statusEl) statusEl.textContent = `${fusedCount}/${Object.keys(teams).length} teams fused · ${now}`;
+    displayScoutingTeams();
+};
+
+window.displayScoutingTeams = function () {
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    const table = document.getElementById('scoutingTeamTable');
+    const body  = document.getElementById('scoutingTeamBody');
+    if (!table || !body) return;
+
+    const rawStr = localStorage.getItem(`scoutingData_${eventKey}`);
+    if (!rawStr) { table.style.display = 'none'; return; }
+
+    const processed = processScoutingData(eventKey, JSON.parse(rawStr), getScoutingColumnOverrides(eventKey));
+    if (!processed || !processed.config.computeEPABreakdown) { table.style.display = 'none'; return; }
+
+    const { config, byTeam } = processed;
+
+    // Load cached fusion results if available
+    const fusedCache = (() => {
+        try { return JSON.parse(localStorage.getItem(`scoutingFusedStats_${eventKey}`)); } catch { return null; }
+    })();
+
+    const statusEl = document.getElementById('scouting-fusion-status');
+    if (fusedCache && statusEl && !statusEl.textContent.includes('fused')) {
+        const fusedCount = Object.values(fusedCache.teams).filter(r => r.available).length;
+        statusEl.textContent = `${fusedCount}/${Object.keys(byTeam).length} teams fused · ${fusedCache.computed}`;
+    }
+
+    // Build rows: use fused EPA breakdown when available, raw scouting otherwise
+    let rows = Object.entries(byTeam).map(([teamNumber, rawRows]) => {
+        const { rows: deduped } = deduplicateTeamRows(rawRows);
+        const rawStats = config.aggregateTeam(deduped);
+        const fusedResult = fusedCache?.teams?.[teamNumber];
+        const isFused = fusedResult?.available && config.computeFusedEPABreakdown;
+        const breakdown = isFused
+            ? config.computeFusedEPABreakdown(fusedResult.stats)
+            : config.computeEPABreakdown(rawStats);
+        return { teamNumber, matches: rawStats.matches, isFused, ...breakdown };
+    });
+
+    // Sort
+    rows.sort((a, b) => {
+        const va = scoutingSortCol === 'teamNumber' ? parseInt(a.teamNumber) : (a[scoutingSortCol] ?? 0);
+        const vb = scoutingSortCol === 'teamNumber' ? parseInt(b.teamNumber) : (b[scoutingSortCol] ?? 0);
+        return (vb - va) * scoutingSortDir;
+    });
+
+    // Tier by scout EPA rank
+    const sorted = [...rows].sort((a, b) => b.total - a.total);
+    const tierOf = (tn) => {
+        const i = sorted.findIndex(r => r.teamNumber === tn);
+        return i < 8 ? 'S' : i < 20 ? 'A' : i < 32 ? 'B' : 'C';
+    };
+
+    renderScoutingChart([...rows].sort((a, b) => b.total - a.total));
+    table.style.display = 'table';
+    body.innerHTML = rows.map(r => {
+        const tier = tierOf(r.teamNumber);
+        const fusedDot = r.isFused
+            ? `<span title="TBA-fused" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#4ade80;margin-left:5px;vertical-align:middle;"></span>`
+            : '';
+        return `<tr style="background:${TIER_STYLE[tier].bg};border-left:6px solid ${TIER_STYLE[tier].color};cursor:pointer;"
+                    onclick="viewTeamDetail(${r.teamNumber}, 'scouting')">
+            <td>${tierBadge(tier)}</td>
+            <td><strong>${r.teamNumber}</strong></td>
+            <td><strong>${r.total.toFixed(1)}</strong>${fusedDot}</td>
+            <td style="color:#f59e0b;">${r.auto.toFixed(1)}</td>
+            <td style="color:#3b82f6;">${r.teleop.toFixed(1)}</td>
+            <td style="color:#10b981;">${r.endgame.toFixed(1)}</td>
+            <td style="color:#64748b;">${r.matches}</td>
+        </tr>`;
+    }).join('');
+};
+
+// ─── SCOUTING SUB-TABS ──────────────────────────────────────────────────────
+
+let currentScoutingSubTab = 'teams';
+window.switchScoutingSubTab = function (tab) {
+    currentScoutingSubTab = tab;
+    ['teams', 'curation'].forEach(t => {
+        document.getElementById(`scouting-subtab-${t}`).style.display = t === tab ? 'block' : 'none';
+    });
+    document.querySelectorAll('#scoutingSubTabs .detail-tab-btn').forEach((btn, i) => {
+        btn.classList.toggle('active', ['teams', 'curation'][i] === tab);
+    });
+    if (tab === 'curation') renderCurationTab();
+};
+
+async function renderCurationTab() {
+    const container = document.getElementById('scouting-curation-content');
+    if (!container) return;
+
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    const rawStr   = localStorage.getItem(`scoutingData_${eventKey}`);
+    if (!rawStr) {
+        container.innerHTML = '<p style="color:#64748b;font-style:italic;margin-top:20px;">No scouting data loaded.</p>';
+        return;
+    }
+
+    container.innerHTML = '<p style="color:#64748b;font-style:italic;margin-top:20px;">Computing…</p>';
+
+    const processed = processScoutingData(eventKey, JSON.parse(rawStr), getScoutingColumnOverrides(eventKey));
+    if (!processed) { container.innerHTML = '<p style="color:#64748b;font-style:italic;">No game config for this event.</p>'; return; }
+
+    const { config, byTeam, observations } = processed;
+    const tbaMatches  = await db.matches.where('eventKey').equals(eventKey).toArray();
+    const hasBreakdowns = tbaMatches.some(m => m.redBreakdown);
+
+    // Deduplicated rows per team
+    const dedupedByTeam = {};
+    for (const [tn, rows] of Object.entries(byTeam)) {
+        dedupedByTeam[tn] = deduplicateTeamRows(rows).rows;
+    }
+
+    // Build match-level scouting index (team → deduplicated single row per match)
+    const scoutIndex = {}; // matchNumber → { teamNum: row }
+    for (const [tn, rows] of Object.entries(dedupedByTeam)) {
+        for (const r of rows) {
+            if (!scoutIndex[r.matchNumber]) scoutIndex[r.matchNumber] = {};
+            scoutIndex[r.matchNumber][tn] = r;
+        }
+    }
+
+    // Detect cumulative reporting mode
+    const reportingMode = hasBreakdowns
+        ? detectCumulativeReportingMode(tbaMatches, config.teleopFuseStats ?? [])
+        : 'unknown';
+    const isCumulative = reportingMode !== 'separate';
+
+    let html = '';
+
+    // ── 1. MATCH COVERAGE ───────────────────────────────────────────────────
+    const allMatchNums = tbaMatches.map(m => m.matchNumber).sort((a, b) => a - b);
+    const matchCoverage = allMatchNums.map(mn => {
+        const m = tbaMatches.find(x => x.matchNumber === mn);
+        const sc = scoutIndex[mn] || {};
+        const redScouted  = (m?.red  || []).filter(t => sc[t]).length;
+        const blueScouted = (m?.blue || []).filter(t => sc[t]).length;
+        return { mn, m, sc, redScouted, blueScouted,
+            redTotal: (m?.red || []).length, blueTotal: (m?.blue || []).length };
+    });
+
+    const fullyUnscouted = matchCoverage.filter(c => c.redScouted === 0 && c.blueScouted === 0);
+    const partial        = matchCoverage.filter(c => (c.redScouted > 0 || c.blueScouted > 0) &&
+                                                      (c.redScouted < c.redTotal || c.blueScouted < c.blueTotal));
+    const fullyCovered   = matchCoverage.filter(c => c.redScouted === c.redTotal && c.blueScouted === c.blueTotal);
+
+    const summaryStyle = (color) => `cursor:pointer;list-style:none;display:flex;align-items:center;gap:0;margin-bottom:0;padding:6px 0;`;
+    const hdrStyle = (color) => `font-size:0.7em;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;border-left:3px solid ${color};padding-left:10px;color:#94a3b8;flex:1;`;
+    const chevron = `<span class="curation-chevron" style="color:#475569;font-size:0.9em;margin-left:8px;transition:transform 0.15s;">▼</span>`;
+
+    html += `
+    <details style="margin-bottom:20px;">
+        <summary style="${summaryStyle('#64748b')}">
+            <span style="${hdrStyle('#64748b')}">Match Coverage</span>
+            <span style="font-size:0.75em;color:#64748b;margin-right:8px;"><span style="color:#4ade80;">${fullyCovered.length}</span> full · <span style="color:#f59e0b;">${partial.length}</span> partial · <span style="color:#ef4444;">${fullyUnscouted.length}</span> unscouted</span>
+            ${chevron}
+        </summary>
+        <div style="margin-top:12px;">
+        <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;">
+            <div style="background:#0f2010;border:1px solid #166534;border-radius:6px;padding:10px 16px;text-align:center;">
+                <div style="color:#4ade80;font-size:1.4em;font-weight:700;">${fullyCovered.length}</div>
+                <div style="color:#64748b;font-size:0.72em;">Fully scouted</div>
+            </div>
+            <div style="background:#1a1500;border:1px solid #854d0e;border-radius:6px;padding:10px 16px;text-align:center;">
+                <div style="color:#f59e0b;font-size:1.4em;font-weight:700;">${partial.length}</div>
+                <div style="color:#64748b;font-size:0.72em;">Partially scouted</div>
+            </div>
+            <div style="background:#1a0a0a;border:1px solid #7f1d1d;border-radius:6px;padding:10px 16px;text-align:center;">
+                <div style="color:#ef4444;font-size:1.4em;font-weight:700;">${fullyUnscouted.length}</div>
+                <div style="color:#64748b;font-size:0.72em;">Unscouted</div>
+            </div>
+        </div>
+        <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:0.78em;">
+            <thead><tr style="color:#64748b;border-bottom:1px solid #334155;">
+                <th style="text-align:left;padding:4px 8px;">Match</th>
+                <th style="text-align:center;padding:4px 8px;">Red scouted</th>
+                <th style="text-align:center;padding:4px 8px;">Blue scouted</th>
+                <th style="text-align:left;padding:4px 8px;">Missing teams</th>
+            </tr></thead>
+            <tbody>
+            ${matchCoverage.map(({ mn, m, sc, redScouted, blueScouted, redTotal, blueTotal }) => {
+                const full = redScouted === redTotal && blueScouted === blueTotal;
+                const none = redScouted === 0 && blueScouted === 0;
+                const missing = [...(m?.red || []).filter(t => !sc[t]), ...(m?.blue || []).filter(t => !sc[t])];
+                return `<tr style="border-bottom:1px solid #1e293b;">
+                    <td style="padding:4px 8px;color:#60a5fa;">QM ${mn}</td>
+                    <td style="text-align:center;padding:4px 8px;color:${redScouted === redTotal ? '#4ade80' : '#f59e0b'};">${redScouted}/${redTotal}</td>
+                    <td style="text-align:center;padding:4px 8px;color:${blueScouted === blueTotal ? '#4ade80' : '#f59e0b'};">${blueScouted}/${blueTotal}</td>
+                    <td style="padding:4px 8px;color:#94a3b8;">${missing.length ? missing.join(', ') : '—'}</td>
+                </tr>`;
+            }).join('')}
+            </tbody>
+        </table>
+        </div>
+        </div>
+    </details>`;
+
+    // ── 2. PIT SCOUTING COVERAGE ─────────────────────────────────────────────
+    {
+        const pitRawStr = localStorage.getItem(`pitData_${eventKey}`);
+
+        // Build full team list: prefer TBA match alliances, fall back to scouting byTeam
+        const eventTeams = new Set();
+        for (const m of tbaMatches) {
+            for (const t of [...(m.red || []), ...(m.blue || [])]) eventTeams.add(t);
+        }
+        if (!eventTeams.size) {
+            for (const tn of Object.keys(byTeam)) eventTeams.add(tn);
+        }
+
+        if (!pitRawStr) {
+            html += `
+            <details style="margin-bottom:20px;">
+                <summary style="${summaryStyle('#64748b')}">
+                    <span style="${hdrStyle('#64748b')}">Pit Scouting Coverage</span>
+                    <span style="font-size:0.75em;color:#475569;margin-right:8px;">No pit data loaded</span>
+                    ${chevron}
+                </summary>
+                <div style="margin-top:12px;">
+                    <p style="color:#475569;font-size:0.85em;font-style:italic;">Sync a pit scouting sheet from the Home tab to see coverage.</p>
+                </div>
+            </details>`;
+        } else {
+            const pitRows = JSON.parse(pitRawStr);
+
+            // Find which event teams have a pit row (value-match heuristic)
+            const pittedTeams = new Set();
+            for (const row of pitRows) {
+                for (const v of Object.values(row)) {
+                    const trimmed = String(v).trim();
+                    if (eventTeams.has(trimmed)) { pittedTeams.add(trimmed); break; }
+                }
+            }
+
+            const sort = arr => [...arr].sort((a, b) => parseInt(a) - parseInt(b));
+            const missing  = sort([...eventTeams].filter(t => !pittedTeams.has(t)));
+            const scouted  = sort([...eventTeams].filter(t => pittedTeams.has(t)));
+
+            const chip = (tn, color) =>
+                `<span onclick="viewTeamDetail(${tn}, 'pit-data')" style="cursor:pointer;display:inline-block;padding:2px 8px;border-radius:12px;background:${color}22;border:1px solid ${color}55;color:${color};font-size:0.78em;font-weight:600;margin:2px;">${tn}</span>`;
+
+            html += `
+            <details style="margin-bottom:20px;">
+                <summary style="${summaryStyle('#64748b')}">
+                    <span style="${hdrStyle('#64748b')}">Pit Scouting Coverage</span>
+                    <span style="font-size:0.75em;color:#64748b;margin-right:8px;"><span style="color:#4ade80;">${scouted.length}</span> scouted · <span style="color:#ef4444;">${missing.length}</span> missing</span>
+                    ${chevron}
+                </summary>
+                <div style="margin-top:12px;">
+                    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;">
+                        <div style="background:#0f2010;border:1px solid #166534;border-radius:6px;padding:10px 16px;text-align:center;">
+                            <div style="color:#4ade80;font-size:1.4em;font-weight:700;">${scouted.length}</div>
+                            <div style="color:#64748b;font-size:0.72em;">Pit scouted</div>
+                        </div>
+                        <div style="background:#1a0a0a;border:1px solid #7f1d1d;border-radius:6px;padding:10px 16px;text-align:center;">
+                            <div style="color:#ef4444;font-size:1.4em;font-weight:700;">${missing.length}</div>
+                            <div style="color:#64748b;font-size:0.72em;">Not scouted</div>
+                        </div>
+                        <div style="background:#0c1220;border:1px solid #1e3a5f;border-radius:6px;padding:10px 16px;text-align:center;">
+                            <div style="color:#60a5fa;font-size:1.4em;font-weight:700;">${pitRows.length}</div>
+                            <div style="color:#64748b;font-size:0.72em;">Pit entries total</div>
+                        </div>
+                    </div>
+                    ${missing.length ? `
+                    <div style="margin-bottom:12px;">
+                        <div style="color:#ef4444;font-size:0.72em;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">Not yet scouted</div>
+                        <div>${missing.map(t => chip(t, '#ef4444')).join('')}</div>
+                    </div>` : `<p style="color:#4ade80;font-size:0.85em;margin:0 0 12px;">All ${eventTeams.size} teams have been pit scouted.</p>`}
+                    ${scouted.length ? `
+                    <div>
+                        <div style="color:#4ade80;font-size:0.72em;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">Scouted</div>
+                        <div>${scouted.map(t => chip(t, '#4ade80')).join('')}</div>
+                    </div>` : ''}
+                </div>
+            </details>`;
+        }
+    }
+
+    // ── 3. FOUL POINTS ──────────────────────────────────────────────────────
+    if (hasBreakdowns) {
+        const foulRows = [];
+        for (const m of tbaMatches) {
+            for (const [alliance, breakdown, oppBreakdown] of [
+                ['red',  m.redBreakdown,  m.blueBreakdown],
+                ['blue', m.blueBreakdown, m.redBreakdown],
+            ]) {
+                if (!breakdown || !oppBreakdown) continue;
+                // foulPoints on the breakdown = pts awarded TO this alliance FROM opponent fouls
+                const foulPts = breakdown.foulPoints ?? 0;
+                foulRows.push({ mn: m.matchNumber, alliance, foulPts, teams: m[alliance] || [] });
+            }
+        }
+        const avgFoul = foulRows.length ? foulRows.reduce((s, r) => s + r.foulPts, 0) / foulRows.length : 0;
+        const perRobot = (avgFoul / 3).toFixed(1);
+
+        html += `
+        <details style="margin-bottom:20px;">
+            <summary style="${summaryStyle('#a78bfa')}">
+                <span style="${hdrStyle('#a78bfa')}">Foul Points Received</span>
+                <span style="font-size:0.75em;color:#64748b;margin-right:8px;"><span style="color:#f8fafc;">${avgFoul.toFixed(1)}</span> pts/alliance · <span style="color:#f8fafc;">${perRobot}</span> pts/robot</span>
+                ${chevron}
+            </summary>
+            <div style="margin-top:12px;">
+            <p style="color:#94a3b8;font-size:0.82em;margin:0 0 10px;">Average <strong style="color:#f8fafc;">${avgFoul.toFixed(1)} pts/alliance/match</strong> received from opponent fouls — roughly <strong style="color:#f8fafc;">${perRobot} pts/robot/match</strong> not captured by scouting.</p>
+            <div style="overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:0.78em;">
+                <thead><tr style="color:#64748b;border-bottom:1px solid #334155;">
+                    <th style="text-align:left;padding:4px 8px;">Match</th>
+                    <th style="padding:4px 8px;">Alliance</th>
+                    <th style="text-align:right;padding:4px 8px;">Foul pts received</th>
+                    <th style="text-align:right;padding:4px 8px;">Per robot</th>
+                </tr></thead>
+                <tbody>
+                ${foulRows.map(r => `
+                    <tr style="border-bottom:1px solid #1e293b;">
+                        <td style="padding:4px 8px;color:#60a5fa;">QM ${r.mn}</td>
+                        <td style="padding:4px 8px;color:${r.alliance==='red'?'#f87171':'#60a5fa'};">${r.alliance}</td>
+                        <td style="text-align:right;padding:4px 8px;color:${r.foulPts>10?'#f59e0b':'#94a3b8'};">${r.foulPts}</td>
+                        <td style="text-align:right;padding:4px 8px;color:#64748b;">${(r.foulPts/3).toFixed(1)}</td>
+                    </tr>`).join('')}
+                </tbody>
+            </table>
+            </div>
+            </div>
+        </details>`;
+    }
+
+    // ── 4. OUTLIER MATCHES ──────────────────────────────────────────────────
+    {
+        const computeMatchEPA = (row) => {
+            if (!config.scoringWeights) return 0;
+            const s = row;
+            // inline robotFuseStats scout values
+            const autoMobilityPts = s.movedInAuto ? 3 : 0;
+            const pos = (s.endPosition || '').toLowerCase();
+            const endgamePts = pos === 'deep climb' ? 12 : pos === 'shallow climb' ? 6 : pos === 'parked' ? 2 : 0;
+            const flat = { ...s, autoMobilityPts, endgamePts };
+            return Object.entries(config.scoringWeights).reduce((sum, [k, w]) => sum + (flat[k] ?? 0) * w, 0);
+        };
+
+        const outliers = [];
+        for (const [tn, rows] of Object.entries(dedupedByTeam)) {
+            const played = rows.filter(r => !r.noShow);
+            if (played.length < 2) continue;
+            const epas = played.map(r => ({ r, epa: computeMatchEPA(r) }));
+            const mean = epas.reduce((s, x) => s + x.epa, 0) / epas.length;
+            const std  = Math.sqrt(epas.reduce((s, x) => s + (x.epa - mean) ** 2, 0) / epas.length);
+            for (const { r, epa } of epas) {
+                const z = std > 0 ? (epa - mean) / std : 0;
+                if (Math.abs(z) >= 1.5) outliers.push({ tn, mn: r.matchNumber, epa, mean, z });
+            }
+        }
+        outliers.sort((a, b) => Math.abs(b.z) - Math.abs(a.z));
+
+        html += `
+        <details style="margin-bottom:20px;">
+            <summary style="${summaryStyle('#f59e0b')}">
+                <span style="${hdrStyle('#f59e0b')}">Match Outliers <span style="color:#475569;font-weight:400;font-size:0.9em;">(≥1.5σ from team mean)</span></span>
+                <span style="font-size:0.75em;color:#64748b;margin-right:8px;"><span style="color:${outliers.length>0?'#f59e0b':'#4ade80'};">${outliers.length}</span> found</span>
+                ${chevron}
+            </summary>
+            <div style="margin-top:12px;">
+            ${outliers.length === 0 ? '<p style="color:#64748b;font-style:italic;font-size:0.85em;">No significant outliers found.</p>' : `
+            <div style="overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:0.78em;">
+                <thead><tr style="color:#64748b;border-bottom:1px solid #334155;">
+                    <th style="text-align:left;padding:4px 8px;">Team</th>
+                    <th style="text-align:left;padding:4px 8px;">Match</th>
+                    <th style="text-align:right;padding:4px 8px;">Match EPA</th>
+                    <th style="text-align:right;padding:4px 8px;">Team avg</th>
+                    <th style="text-align:right;padding:4px 8px;">Deviation</th>
+                </tr></thead>
+                <tbody>
+                ${outliers.slice(0, 30).map(o => {
+                    const dir = o.z > 0 ? '+' : '';
+                    const c   = o.z > 0 ? '#4ade80' : '#ef4444';
+                    return `<tr style="border-bottom:1px solid #1e293b;cursor:pointer;" onclick="viewTeamDetail(${o.tn}, 'scouting')">
+                        <td style="padding:4px 8px;color:#f8fafc;font-weight:600;">${o.tn}</td>
+                        <td style="padding:4px 8px;color:#60a5fa;">QM ${o.mn}</td>
+                        <td style="text-align:right;padding:4px 8px;">${o.epa.toFixed(1)}</td>
+                        <td style="text-align:right;padding:4px 8px;color:#64748b;">${o.mean.toFixed(1)}</td>
+                        <td style="text-align:right;padding:4px 8px;color:${c};">${dir}${o.z.toFixed(2)}σ</td>
+                    </tr>`;
+                }).join('')}
+                </tbody>
+            </table>
+            </div>`}
+            </div>
+        </details>`;
+    }
+
+    // ── 5. EPA COMPARISON ───────────────────────────────────────────────────
+    {
+        const statboticsTeams = await db.teams.toArray();
+        const statByTeam = Object.fromEntries(statboticsTeams.map(t => [String(t.teamNumber), t]));
+        const fusedCache = (() => { try { return JSON.parse(localStorage.getItem(`scoutingFusedStats_${eventKey}`)); } catch { return null; } })();
+        const compRows = Object.entries(dedupedByTeam).map(([tn, rows]) => {
+            const rawStats = config.aggregateTeam(rows);
+            const fusedResult = fusedCache?.teams?.[tn];
+            const breakdown = (fusedResult?.available && config.computeFusedEPABreakdown)
+                ? config.computeFusedEPABreakdown(fusedResult.stats)
+                : config.computeEPABreakdown(rawStats);
+            const statTeam = statByTeam[tn];
+            const statEPA = statTeam?.currentEPA ?? null;
+            return { tn, scoutEPA: breakdown.total, statEPA, diff: statEPA != null ? breakdown.total - statEPA : null, matches: rawStats.matches, fused: !!fusedResult?.available };
+        }).filter(r => r.statEPA != null).sort((a, b) => b.statEPA - a.statEPA);
+
+        const avgGap = compRows.length ? (compRows.reduce((s,r) => s + r.diff, 0) / compRows.length) : 0;
+        html += `
+        <details style="margin-bottom:20px;">
+            <summary style="${summaryStyle('#10b981')}">
+                <span style="${hdrStyle('#10b981')}">EPA Comparison <span style="color:#475569;font-weight:400;font-size:0.9em;">(scouting vs Statbotics)</span></span>
+                <span style="font-size:0.75em;color:#64748b;margin-right:8px;"><span style="color:${avgGap < -5 ? '#ef4444' : avgGap > 5 ? '#f59e0b' : '#4ade80'};">${avgGap>=0?'+':''}${avgGap.toFixed(1)}</span> avg gap · ${compRows.length} teams</span>
+                ${chevron}
+            </summary>
+            <div style="margin-top:12px;">
+            <div style="overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:0.78em;">
+                <thead><tr style="color:#64748b;border-bottom:1px solid #334155;">
+                    <th style="text-align:left;padding:4px 8px;">Team</th>
+                    <th style="text-align:right;padding:4px 8px;">Scout EPA</th>
+                    <th style="text-align:right;padding:4px 8px;">Statbotics EPA</th>
+                    <th style="text-align:right;padding:4px 8px;">Gap</th>
+                    <th style="text-align:right;padding:4px 8px;">Matches</th>
+                </tr></thead>
+                <tbody>
+                ${compRows.map(r => {
+                    const gapColor = r.diff > 5 ? '#f59e0b' : r.diff < -5 ? '#ef4444' : '#64748b';
+                    const dot = r.fused ? `<span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:#4ade80;margin-left:4px;vertical-align:middle;"></span>` : '';
+                    return `<tr style="border-bottom:1px solid #1e293b;cursor:pointer;" onclick="viewTeamDetail(${r.tn}, 'scouting')">
+                        <td style="padding:4px 8px;font-weight:600;">${r.tn}</td>
+                        <td style="text-align:right;padding:4px 8px;">${r.scoutEPA.toFixed(1)}${dot}</td>
+                        <td style="text-align:right;padding:4px 8px;color:#64748b;">${r.statEPA.toFixed(1)}</td>
+                        <td style="text-align:right;padding:4px 8px;color:${gapColor};">${r.diff>=0?'+':''}${r.diff.toFixed(1)}</td>
+                        <td style="text-align:right;padding:4px 8px;color:#475569;">${r.matches}</td>
+                    </tr>`;
+                }).join('')}
+                </tbody>
+            </table>
+            </div>
+            </div>
+        </details>`;
+    }
+
+    // ── 6. Game-specific curation section ────────────────────────────────────
+    if (config?.curationSection) {
+        html += config.curationSection(tbaMatches, matchCoverage, scoutIndex, isCumulative, reportingMode, { summaryStyle, hdrStyle, chevron });
+    }
+
+    container.innerHTML = html;
+}
 
 // ─── TOOLS TAB ──────────────────────────────────────────────────────────────
 
@@ -2776,6 +3826,30 @@ async function renderPickList() {
         }
     }
 
+    // Scouting EPA
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    const scoutEPAMap = {};
+    if (eventKey) {
+        const rawStr = localStorage.getItem(`scoutingData_${eventKey}`);
+        if (rawStr) {
+            const fusedCache = (() => { try { return JSON.parse(localStorage.getItem(`scoutingFusedStats_${eventKey}`)); } catch { return null; } })();
+            const processed = processScoutingData(eventKey, JSON.parse(rawStr), getScoutingColumnOverrides(eventKey));
+            if (processed?.config?.computeEPABreakdown) {
+                const { config, byTeam } = processed;
+                for (const [tn, rawRows] of Object.entries(byTeam)) {
+                    const { rows: deduped } = deduplicateTeamRows(rawRows);
+                    const rawStats = config.aggregateTeam(deduped);
+                    const fusedResult = fusedCache?.teams?.[tn];
+                    const isFused = !!(fusedResult?.available && config.computeFusedEPABreakdown);
+                    const breakdown = isFused
+                        ? config.computeFusedEPABreakdown(fusedResult.stats)
+                        : config.computeEPABreakdown(rawStats);
+                    scoutEPAMap[tn] = { total: breakdown.total, isFused };
+                }
+            }
+        }
+    }
+
     // Build rows
     let rows = allTeams.map(team => {
         const tn = parseInt(team.teamNumber);
@@ -2787,7 +3861,9 @@ async function renderPickList() {
         const epaVal = hasCeil ? parseFloat(analysis.ceiling) : (team.currentEPA || 0);
         const hasLOO = tba?.ignoredMatchKey && tba.adjustedOPR != null && !globalIgnored.has(tba.ignoredMatchKey);
         const hasAdj = !hasLOO && globalOPRMap != null;
-        return { team, rp, opr, epaVal, hasCeil, hasLOO, hasAdj };
+        const scoutData = scoutEPAMap[tn];
+        return { team, rp, opr, epaVal, hasCeil, hasLOO, hasAdj,
+                 scoutEPA: scoutData?.total ?? null, scoutFused: scoutData?.isFused ?? false };
     });
 
     // Composite + tier (mirrors renderAtAGlance)
@@ -2799,10 +3875,14 @@ async function renderPickList() {
         };
         const epaVals = rows.map(r => r.epaVal);
         const oprVals = rows.map(r => r.opr ?? 0);
+        const scoutEPAVals = rows.map(r => r.scoutEPA ?? 0);
         const hasAnyOPR = rows.some(r => r.opr != null);
+        const hasAnyScout = rows.some(r => r.scoutEPA != null);
         const composite = r => {
-            const ep = pctRank(epaVals, r.epaVal);
-            return hasAnyOPR ? (ep + pctRank(oprVals, r.opr ?? 0)) / 2 : ep;
+            const sources = [pctRank(epaVals, r.epaVal)];
+            if (hasAnyOPR)   sources.push(pctRank(oprVals, r.opr ?? 0));
+            if (hasAnyScout) sources.push(pctRank(scoutEPAVals, r.scoutEPA ?? 0));
+            return sources.reduce((a, b) => a + b, 0) / sources.length;
         };
         rows.forEach(r => { r.composite = composite(r); });
         const tierOrder = [...rows].sort((a, b) => a.composite - b.composite);
@@ -2841,10 +3921,11 @@ async function renderPickList() {
         const unranked = sepIdx >= 0 ? rows.slice(sepIdx + 1) : [...rows];
         const getValue = r => {
             switch (pickListSortCol) {
-                case 'epa': return r.epaVal;
-                case 'opr': return r.opr ?? -999;
-                case 'rp':  return r.rp.rp;
-                default:    return (1 - r.composite) * 100;
+                case 'epa':      return r.epaVal;
+                case 'opr':      return r.opr ?? -999;
+                case 'rp':       return r.rp.rp;
+                case 'scoutEPA': return r.scoutEPA ?? -999;
+                default:         return (1 - r.composite) * 100;
             }
         };
         unranked.sort((a, b) => (getValue(b) - getValue(a)) * pickListSortDir);
@@ -2865,8 +3946,9 @@ async function renderPickList() {
         <th style="padding:10px 8px;border-bottom:2px solid #334155;color:#94a3b8;text-align:left;">Name</th>
         ${th('Score', 'composite')}
         ${th('RP', 'rp')}
-        ${th('EPA / Ceil', 'epa')}
-        ${th('OPR', 'opr')}
+        ${th('<img src="./statbotics.ico" height="18" style="vertical-align:middle;opacity:0.85;" title="EPA / Ceiling (Statbotics)">', 'epa')}
+        ${th('<img src="./tba.png" height="18" style="vertical-align:middle;opacity:0.85;" title="OPR (TBA)">', 'opr')}
+        ${th('<img src="./sheets.png" height="18" style="vertical-align:middle;opacity:0.85;" title="Scouting EPA (Google Sheets)">', 'scoutEPA')}
         <th style="width:60px;padding:10px 8px;border-bottom:2px solid #334155;"></th>
     </tr>`;
 
@@ -2885,14 +3967,14 @@ async function renderPickList() {
     tbody.innerHTML = rows.map(r => {
         if (r.separator) {
             return `<tr data-separator="true" style="user-select:none;">
-                <td colspan="9" class="drag-handle"
+                <td colspan="10" class="drag-handle"
                     style="padding:9px 20px;border-top:2px dashed #334155;border-bottom:2px dashed #334155;background:#080d16;text-align:center;cursor:grab;touch-action:none;color:#475569;font-size:0.8rem;font-weight:700;letter-spacing:0.06em;">
                     ⠿ &nbsp; drag to reposition &nbsp;·&nbsp; unranked below &nbsp; ⠿
                 </td>
             </tr>`;
         }
         const rowPos = pickPos++;
-        const { team, rp, opr, epaVal, hasCeil, hasLOO, hasAdj } = r;
+        const { team, rp, opr, epaVal, hasCeil, hasLOO, hasAdj, scoutEPA, scoutFused } = r;
         const ts = TIER[r.tier];
         const record = hasRP ? `${rp.wins}–${rp.losses}${rp.ties ? `–${rp.ties}` : ''}` : null;
         const compStr = ((1 - r.composite) * 100).toFixed(1);
@@ -2900,6 +3982,8 @@ async function renderPickList() {
         const oprBadge = hasLOO
             ? `<span style="color:#fbbf24;font-size:0.65em;font-weight:600;margin-left:3px;">LOO</span>`
             : hasAdj ? `<span style="color:#f97316;font-size:0.65em;font-weight:600;margin-left:3px;">ADJ</span>` : '';
+        const scoutStr = scoutEPA != null ? scoutEPA.toFixed(1) : '—';
+        const fusedBadge = scoutFused ? `<span style="color:#818cf8;font-size:0.65em;font-weight:600;margin-left:3px;">F</span>` : '';
         const td = (content, center = true) =>
             `<td style="padding:13px 10px;border-bottom:1px solid #1e293b;${center ? ' text-align:center;' : ''}">${content}</td>`;
 
@@ -2928,6 +4012,7 @@ async function renderPickList() {
             })()}
             ${td(`${epaVal.toFixed(1)}${ceilBadge}`)}
             ${td(hasOPR ? `${opr != null ? opr.toFixed(1) : '—'}${oprBadge}` : '—')}
+            ${td(`${scoutStr}${fusedBadge}`)}
             <td style="padding:13px 10px;border-bottom:1px solid #1e293b;text-align:center;">
                 <button onclick="dnpTeam('${team.teamNumber}')"
                     style="background:#1e293b;color:#ef4444;border:1px solid #ef4444;border-radius:6px;padding:5px 10px;font-size:0.8rem;font-weight:700;cursor:pointer;white-space:nowrap;">
@@ -3441,6 +4526,45 @@ async function fetchAndCacheTeamPhoto(teamNumber, photoElId, year) {
     } catch (_) { }
 }
 
+function renderPitTab(teamNumber) {
+    const container = document.getElementById('tab-pit-data');
+    if (!container) return;
+
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    const rawStr = eventKey ? localStorage.getItem(`pitData_${eventKey}`) : null;
+
+    if (!rawStr) {
+        container.innerHTML = `<p style="color:#64748b;font-style:italic;padding:16px 0;">No pit scouting data loaded. Sync a pit sheet from the Home tab.</p>`;
+        return;
+    }
+
+    const rows = JSON.parse(rawStr);
+    const tn = String(teamNumber);
+    // Find row(s) where any column's value matches the team number (numeric or string)
+    const teamRows = rows.filter(row =>
+        Object.values(row).some(v => String(v).trim() === tn)
+    );
+
+    if (!teamRows.length) {
+        container.innerHTML = `<p style="color:#64748b;font-style:italic;padding:16px 0;">No pit data found for team ${teamNumber}.</p>`;
+        return;
+    }
+
+    const SKIP_VALUE = v => v == null || String(v).trim() === '';
+    container.innerHTML = teamRows.map((row, idx) => {
+        const fields = Object.entries(row).filter(([, v]) => !SKIP_VALUE(v));
+        const cells = fields.map(([k, v]) => `
+            <div style="padding:8px 12px;border-bottom:1px solid #1e293b;">
+                <div style="color:#64748b;font-size:0.72em;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:2px;">${k}</div>
+                <div style="color:#f1f5f9;font-size:0.92em;">${String(v)}</div>
+            </div>`).join('');
+        const heading = teamRows.length > 1
+            ? `<div style="color:#94a3b8;font-size:0.8em;font-weight:700;padding:8px 12px;background:#0f172a;border-bottom:1px solid #334155;">Entry ${idx + 1}</div>`
+            : '';
+        return `<div style="background:#1e293b;border-radius:8px;overflow:hidden;margin-bottom:12px;">${heading}${cells}</div>`;
+    }).join('');
+}
+
 window.switchDetailTab = async function (tab) {
     const tabs = ['overview', 'epa-opr', 'scouting', 'pit-data'];
     tabs.forEach(t => {
@@ -3456,7 +4580,279 @@ window.switchDetailTab = async function (tab) {
         renderChart(activeTeamData);
         await renderTBADetail(activeTeamData.teamNumber, activeTBAData);
     }
+    if (tab === 'scouting' && activeTeamData) {
+        await renderScoutingTab(activeTeamData.teamNumber);
+    }
+    if (tab === 'pit-data' && activeTeamData) {
+        renderPitTab(activeTeamData.teamNumber);
+    }
 };
+
+// Merge same-matchNumber rows for one team into averaged/ORed single rows.
+// Returns { rows: deduped[], duplicated: Set<matchNumber> }
+function deduplicateTeamRows(rows) {
+    const byMatch = {};
+    for (const r of rows) {
+        if (!byMatch[r.matchNumber]) byMatch[r.matchNumber] = [];
+        byMatch[r.matchNumber].push(r);
+    }
+    const duplicated = new Set();
+    const merged = Object.entries(byMatch).map(([, group]) => {
+        if (group.length === 1) return group[0];
+        duplicated.add(group[0].matchNumber);
+        const result = {};
+        for (const key of Object.keys(group[0])) {
+            const vals = group.map(r => r[key]);
+            if (key === 'comments') {
+                result[key] = vals.filter(v => v).join(' | ');
+            } else if (typeof vals[0] === 'boolean') {
+                result[key] = vals.some(Boolean);
+            } else if (typeof vals[0] === 'number') {
+                result[key] = vals.reduce((s, v) => s + v, 0) / vals.length;
+            } else {
+                result[key] = vals.find(v => v) ?? vals[0];
+            }
+        }
+        return result;
+    });
+    return { rows: merged.sort((a, b) => a.matchNumber - b.matchNumber), duplicated };
+}
+
+async function renderScoutingTab(teamNumber) {
+    const container = document.getElementById('tab-scouting');
+    if (!container) return;
+
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    if (!eventKey) {
+        container.innerHTML = '<p style="color:#64748b;font-style:italic;margin-top:24px;text-align:center;">Set an event key on the Home tab to see scouting data.</p>';
+        return;
+    }
+
+    const rawStr = localStorage.getItem(`scoutingData_${eventKey}`);
+    if (!rawStr) {
+        container.innerHTML = '<p style="color:#64748b;font-style:italic;margin-top:24px;text-align:center;">No scouting data. Sync scouting data on the Home tab.</p>';
+        return;
+    }
+
+    const rawRows = JSON.parse(rawStr);
+    const overrides = getScoutingColumnOverrides(eventKey);
+    const processed = processScoutingData(eventKey, rawRows, overrides);
+    if (!processed) {
+        container.innerHTML = '<p style="color:#64748b;font-style:italic;margin-top:24px;text-align:center;">No game config found for this event.</p>';
+        return;
+    }
+
+    const { config, byTeam } = processed;
+    const rawTeamRows = byTeam[String(teamNumber)] || [];
+    if (rawTeamRows.length === 0) {
+        container.innerHTML = '<p style="color:#64748b;font-style:italic;margin-top:24px;text-align:center;">No scouting observations for this team at this event.</p>';
+        return;
+    }
+
+    const { rows: teamRows, duplicated } = deduplicateTeamRows(rawTeamRows);
+
+    const rawStats = config.aggregateTeam(teamRows);
+
+    // Inject raw fallbacks for robot stats (computed from scouting aggregates)
+    if (config.robotFuseStats) {
+        for (const stat of config.robotFuseStats) {
+            const vals = teamRows.filter(r => !r.noShow).map(r => stat.scout(r));
+            rawStats[stat.key] = vals.length > 0 ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
+        }
+    }
+
+    const tbaMatches = await db.matches.where('eventKey').equals(eventKey).toArray();
+    const allByMatch = indexObservationsByMatch(processed.observations);
+    const fused = fuseScoutingWithTBA(teamNumber, teamRows, allByMatch, tbaMatches, config);
+
+    const fusedByMatch = fused.fusedByMatch ?? {};
+    const fusedStats = fused.available ? { ...fused.stats } : {};
+
+    // Derive fused totals by summing fused components
+    if (fused.available) {
+        config?.deriveFusedTotals?.(fusedStats);
+    }
+
+    const getValue = (key) => fusedStats[key] != null ? fusedStats[key] : rawStats[key];
+    const isFused  = (key) => fusedStats[key] != null;
+
+    // Compute scoutingEPA from weighted sum; mark fused if any component came from TBA
+    if (config.scoringWeights) {
+        const epa = Object.entries(config.scoringWeights)
+            .reduce((sum, [key, w]) => sum + (getValue(key) ?? 0) * w, 0);
+        rawStats.scoutingEPA = epa;
+        const anyFused = Object.keys(config.scoringWeights).some(isFused);
+        if (anyFused) fusedStats.scoutingEPA = epa;
+    }
+
+    let html = '';
+
+    // Fusion status banner
+    if (fused.available) {
+        const { total, withTBA } = fused.coverage;
+        html += `
+        <div style="background:#0f1f0f;border:1px solid #166534;border-radius:6px;padding:10px 14px;margin-bottom:16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <span style="color:#4ade80;font-size:0.75em;font-weight:700;">TBA FUSED</span>
+            <span style="color:#64748b;font-size:0.75em;">${withTBA}/${total} matches fused · ${fused.reportingMode} reporting</span>
+            <span style="color:#475569;font-size:0.72em;margin-left:auto;">● fused &nbsp; ○ scout-only</span>
+        </div>`;
+    } else if (tbaMatches.some(m => m.redBreakdown)) {
+        html += `<div style="background:#1a1a1a;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:0.78em;color:#64748b;">TBA fusion unavailable — showing scouting data only.</div>`;
+    } else {
+        html += `<div style="background:#1e1a0a;border:1px solid #854d0e;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:0.78em;color:#ca8a04;">Run "Sync TBA Matches" to enable TBA-fused estimates. Showing scouting data only.</div>`;
+    }
+
+    // Stat groups
+    const GROUP_COLORS = {
+        'Overview':              { accent: '#64748b', bg: 'rgba(100,116,139,0.07)' },
+        'Auto Coral':            { accent: '#f59e0b', bg: 'rgba(245,158,11,0.08)'  },
+        'Auto Algae':            { accent: '#f59e0b', bg: 'rgba(245,158,11,0.08)'  },
+        'Teleop Coral':          { accent: '#3b82f6', bg: 'rgba(59,130,246,0.08)'  },
+        'Teleop Algae':          { accent: '#3b82f6', bg: 'rgba(59,130,246,0.08)'  },
+        'Endgame & Reliability': { accent: '#10b981', bg: 'rgba(16,185,129,0.08)'  },
+        'Qualitative':           { accent: '#a78bfa', bg: 'rgba(167,139,250,0.08)' },
+    };
+    const DEFAULT_COLOR = { accent: '#64748b', bg: 'rgba(100,116,139,0.07)' };
+
+    let currentGroup = null;
+    let currentColor = DEFAULT_COLOR;
+    let groupCells = [];
+
+    const flushGroup = () => {
+        if (!currentGroup || groupCells.length === 0) return;
+        const { accent } = currentColor;
+        html += `
+        <div style="margin-bottom:20px;border-left:3px solid ${accent};padding-left:12px;">
+            <div style="color:${accent};font-size:0.7em;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;">${currentGroup}</div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:8px;">
+                ${groupCells.join('')}
+            </div>
+        </div>`;
+        groupCells = [];
+    };
+
+    for (const field of config.displayFields) {
+        if (field.group) {
+            flushGroup();
+            currentGroup = field.group;
+            currentColor = GROUP_COLORS[field.group] || DEFAULT_COLOR;
+            continue;
+        }
+        const val = getValue(field.key);
+        if (val == null) continue;
+
+        let display;
+        if (field.suffix === '%') display = `${Math.round(val)}%`;
+        else if (field.decimals != null) display = val.toFixed(field.decimals);
+        else display = String(Math.round(val));
+
+        const dot = isFused(field.key)
+            ? `<span title="TBA-fused" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#4ade80;margin-left:5px;vertical-align:middle;flex-shrink:0;"></span>`
+            : '';
+
+        groupCells.push(`
+            <div style="background:${currentColor.bg};border:1px solid rgba(255,255,255,0.04);border-radius:6px;padding:10px;text-align:center;">
+                <div style="color:#94a3b8;font-size:0.65em;margin-bottom:4px;">${field.label}</div>
+                <div style="font-size:1.05em;font-weight:700;display:flex;align-items:center;justify-content:center;">${display}${dot}</div>
+            </div>`);
+    }
+    flushGroup();
+
+    // Per-match detail table
+    const teamStr = String(teamNumber);
+    const played = teamRows.filter(r => !r.noShow).sort((a, b) => a.matchNumber - b.matchNumber);
+    const scoutedNums = new Set(played.map(r => r.matchNumber));
+
+    // TBA matches where this team appears but has no scouting row
+    const unscoutedTBA = tbaMatches
+        .filter(m => (m.red?.includes(teamStr) || m.blue?.includes(teamStr)) && !scoutedNums.has(m.matchNumber))
+        .map(m => ({ matchNumber: m.matchNumber, row: null }));
+
+    const allEntries = [
+        ...played.map(r => ({ matchNumber: r.matchNumber, row: r })),
+        ...unscoutedTBA,
+    ].sort((a, b) => a.matchNumber - b.matchNumber);
+
+    if (allEntries.length > 0) {
+        const hasFusedMatches = Object.keys(fusedByMatch).length > 0;
+
+        const _cols = config?.matchBreakdownColumns ?? [];
+
+        const buildMatchRow = (matchNumber, row, mode) => {
+            const dupBadge = duplicated.has(matchNumber)
+                ? `<span style="color:#ef4444;font-size:0.75em;font-weight:700;margin-left:4px;">2x</span>`
+                : '';
+            if (!row) {
+                return `<tr style="border-bottom:1px solid #1e293b;opacity:0.45;">
+                    <td style="text-align:left;padding:4px 8px;color:#60a5fa;">QM ${matchNumber}</td>
+                    <td colspan="${_cols.length + 1}" style="padding:4px 8px;color:#475569;font-style:italic;">No scouting data</td>
+                </tr>`;
+            }
+            if (mode === 'fused') {
+                const f = fusedByMatch[matchNumber];
+                if (!f) {
+                    return `<tr style="border-bottom:1px solid #1e293b;opacity:0.5;">
+                        <td style="text-align:left;padding:4px 8px;color:#60a5fa;">QM ${matchNumber}${dupBadge}</td>
+                        ${_cols.map(c => { const v = c.raw(row); return `<td style="text-align:right;padding:4px 6px;font-style:italic;">${v > 0 ? v.toFixed(1).replace(/\.0$/, '') : '—'}</td>`; }).join('')}
+                        <td style="text-align:right;padding:4px 6px;color:#475569;font-style:italic;">no TBA</td>
+                    </tr>`;
+                }
+                const fmt = v => v != null && v > 0 ? v.toFixed(1).replace(/\.0$/, '') : '—';
+                const endPts = f.endgamePts ?? null;
+                return `<tr style="border-bottom:1px solid #1e293b;">
+                    <td style="text-align:left;padding:4px 8px;color:#60a5fa;">QM ${matchNumber}${dupBadge}</td>
+                    ${_cols.map(c => `<td style="text-align:right;padding:4px 6px;color:#4ade80;">${fmt(c.fused(f))}</td>`).join('')}
+                    <td style="text-align:right;padding:4px 6px;color:#4ade80;">${endPts != null ? endPts.toFixed(1).replace(/\.0$/, '') : '—'}</td>
+                </tr>`;
+            }
+            // raw mode
+            return `<tr style="border-bottom:1px solid #1e293b;">
+                <td style="text-align:left;padding:4px 8px;color:#60a5fa;">QM ${matchNumber}${dupBadge}</td>
+                ${_cols.map(c => { const v = c.raw(row); return `<td style="text-align:right;padding:4px 6px;">${v > 0 ? v.toFixed(1).replace(/\.0$/, '') : '—'}</td>`; }).join('')}
+                <td style="text-align:right;padding:4px 6px;color:#94a3b8;">${row.endPosition || '—'}</td>
+            </tr>`;
+        };
+
+        const tableHtml = (mode) => {
+            const endHeader = mode === 'fused' ? 'End (pts)' : 'End';
+            return `
+            <table style="width:100%;border-collapse:collapse;font-size:0.78em;">
+                <thead><tr style="color:#64748b;border-bottom:1px solid #334155;">
+                    <th style="text-align:left;padding:4px 8px;">Match</th>
+                    ${_cols.map(c => `<th style="text-align:right;padding:4px 6px;">${c.label}</th>`).join('')}
+                    <th style="text-align:right;padding:4px 6px;">${endHeader}</th>
+                </tr></thead>
+                <tbody>
+                ${allEntries.map(({ matchNumber, row }) => buildMatchRow(matchNumber, row, mode)).join('')}
+                </tbody>
+            </table>`;
+        };
+
+        const toggleHtml = hasFusedMatches ? `
+            <div style="display:flex;gap:0;border:1px solid #334155;border-radius:5px;overflow:hidden;">
+                <button id="scoutMatchToggleRaw"
+                    onclick="document.getElementById('scoutMatchTableRaw').style.display='';document.getElementById('scoutMatchTableFused').style.display='none';document.getElementById('scoutMatchToggleRaw').style.cssText+='background:#1e293b;color:#f8fafc;';document.getElementById('scoutMatchToggleFused').style.cssText+='background:transparent;color:#64748b;';"
+                    style="background:#1e293b;color:#f8fafc;border:none;padding:4px 12px;font-size:0.72em;cursor:pointer;font-weight:600;">Raw</button>
+                <button id="scoutMatchToggleFused"
+                    onclick="document.getElementById('scoutMatchTableFused').style.display='';document.getElementById('scoutMatchTableRaw').style.display='none';document.getElementById('scoutMatchToggleFused').style.cssText+='background:#1e293b;color:#4ade80;';document.getElementById('scoutMatchToggleRaw').style.cssText+='background:transparent;color:#64748b;';"
+                    style="background:transparent;color:#64748b;border:none;padding:4px 12px;font-size:0.72em;cursor:pointer;font-weight:600;">Fused</button>
+            </div>` : '';
+
+        html += `
+        <div style="margin-bottom:20px;">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+                <div style="color:#64748b;font-size:0.7em;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">Per-Match Detail</div>
+                ${toggleHtml}
+            </div>
+            <div style="overflow-x:auto;">
+                <div id="scoutMatchTableRaw">${tableHtml('raw')}</div>
+                ${hasFusedMatches ? `<div id="scoutMatchTableFused" style="display:none;">${tableHtml('fused')}</div>` : ''}
+            </div>
+        </div>`;
+    }
+
+    container.innerHTML = html;
+}
 
 async function renderTBADetail(teamNumber, tbaTeam) {
     const teamNumStr = teamNumber.toString();
@@ -3751,7 +5147,20 @@ const bootApp = async () => {
     const savedKey = localStorage.getItem('lastEventKey');
     if (savedKey) {
         document.getElementById('eventKeyInput').value = savedKey;
+        updateAppEventKey(savedKey);
     }
+
+    renderScoutingSection();
+
+    // Re-render scouting section and check for public archive whenever the event key changes
+    document.getElementById('eventKeyInput')?.addEventListener('input', () => {
+        renderScoutingSection();
+        const eventKey = document.getElementById('eventKeyInput').value.trim().toLowerCase();
+        updateAppEventKey(eventKey || null);
+        clearTimeout(_archiveCheckTimer);
+        document.getElementById('archiveHint').innerHTML = '';
+        _archiveCheckTimer = setTimeout(() => checkEventArchive(eventKey), 500);
+    });
 
     // Restore sync timestamps
     for (const key of ['statboticsLive', 'tbaOPR', 'tbaMatches']) {
@@ -3791,6 +5200,7 @@ const homeBtn = document.querySelector('.nav-btn');
 window.switchView('homeView', homeBtn);
 
 document.getElementById('eventKeyInput').value = localStorage.getItem('lastEventKey') || '';
+checkEventArchive(document.getElementById('eventKeyInput').value.trim().toLowerCase());
 
 if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register(import.meta.env.BASE_URL + 'sw.js').catch(() => { });

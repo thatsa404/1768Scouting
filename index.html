@@ -710,6 +710,14 @@
             object-fit: contain; border-radius: 2px;
         }
 
+        /* Curation collapsible sections */
+        #scouting-curation-content details > summary {
+            list-style: none;
+            user-select: none;
+        }
+        #scouting-curation-content details > summary::-webkit-details-marker { display: none; }
+        #scouting-curation-content details[open] .curation-chevron { transform: rotate(180deg); }
+
         .drag-handle {
             cursor: grab;
             touch-action: none;
@@ -1011,7 +1019,7 @@
 
     <div class="site-header">
         <img src="logo.png" alt="Team 1768 Logo">
-        <h1>Nashoba Robotics<span class="subtitle">Event Hub</span></h1>
+        <h1>Nashoba Robotics<span class="subtitle" id="headerSubtitle">Event Hub</span></h1>
         <div class="ui-mode-switcher">
             <button id="desktopModeBtn" class="ui-mode-btn active" onclick="setUIMode('desktop')" title="Desktop view">
                 <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M2 4.25A2.25 2.25 0 0 1 4.25 2h11.5A2.25 2.25 0 0 1 18 4.25v8.5A2.25 2.25 0 0 1 15.75 15h-4v1.5h1a.75.75 0 0 1 0 1.5h-5.5a.75.75 0 0 1 0-1.5h1V15h-4A2.25 2.25 0 0 1 2 12.75v-8.5Zm1.5 0a.75.75 0 0 1 .75-.75h11.5a.75.75 0 0 1 .75.75v7.5a.75.75 0 0 1-.75.75H4.25a.75.75 0 0 1-.75-.75v-7.5Z" clip-rule="evenodd"/></svg>
@@ -1115,8 +1123,11 @@
                 <label
                     style="color:#94a3b8;font-size:0.82em;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;display:block;margin-bottom:6px;">Event
                     Key</label>
-                <input type="text" id="eventKeyInput" placeholder="2026necmp"
-                    style="padding:10px;border-radius:4px;border:1px solid #334155;background:#1e293b;color:#f8fafc;width:200px;font-size:1rem;">
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                    <input type="text" id="eventKeyInput" placeholder="2026necmp"
+                        style="padding:10px;border-radius:4px;border:1px solid #334155;background:#1e293b;color:#f8fafc;width:200px;font-size:1rem;">
+                    <div id="archiveHint"></div>
+                </div>
             </div>
 
             <!-- Pre-Event -->
@@ -1166,6 +1177,13 @@
                 </div>
             </div>
 
+            <!-- Scouting Data -->
+            <div style="border-left:3px solid #8b5cf6;padding-left:14px;margin-bottom:24px;">
+                <div style="color:#a78bfa;font-size:0.78em;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px;">Scouting Data</div>
+                <p style="color:#64748b;font-size:0.85em;margin:0 0 10px;">Import team scouting observations from Google Sheets or a local archive.</p>
+                <div id="scouting-data-section"></div>
+            </div>
+
             <div id="status"></div>
             <div id="progressContainer"
                 style="display:none;width:100%;background:#1e293b;margin-top:10px;border-radius:4px;">
@@ -1173,9 +1191,9 @@
                     style="width:0%;height:10px;background:#3b82f6;border-radius:4px;transition:width 0.2s;"></div>
             </div>
 
-            <div style="margin-top:24px;padding-top:16px;border-top:1px solid #1e293b;">
-                <button onclick="clearCache()" style="background:#1e293b;color:#ef4444;border:1px solid #ef4444;">Clear
-                    Cache</button>
+            <div style="margin-top:24px;padding-top:16px;border-top:1px solid #1e293b;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                <button onclick="saveScoutingArchive()" style="background:#1e293b;color:#60a5fa;border:1px solid #60a5fa;">↓ Save Event Archive</button>
+                <button onclick="clearCache()" style="background:#1e293b;color:#ef4444;border:1px solid #ef4444;">Clear Cache</button>
             </div>
             </div><!-- end z-index wrapper -->
         </div>
@@ -1230,11 +1248,17 @@
                             style="cursor:pointer; text-align:center; padding:10px 8px; border-bottom:2px solid #334155; color:#f8fafc;">
                             RP ↕</th>
                         <th onclick="sortGlanceBy('epa')"
-                            style="cursor:pointer; text-align:center; padding:10px 8px; border-bottom:2px solid #334155; color:#94a3b8;">
-                            EPA / Ceiling ↕</th>
+                            style="cursor:pointer; text-align:center; padding:10px 8px; border-bottom:2px solid #334155; color:#94a3b8;"
+                            title="EPA / Ceiling (Statbotics)">
+                            <img src="./statbotics.ico" height="18" style="vertical-align:middle;opacity:0.85;"> ↕</th>
                         <th onclick="sortGlanceBy('opr')"
-                            style="cursor:pointer; text-align:center; padding:10px 8px; border-bottom:2px solid #334155; color:#94a3b8;">
-                            OPR ↕</th>
+                            style="cursor:pointer; text-align:center; padding:10px 8px; border-bottom:2px solid #334155; color:#94a3b8;"
+                            title="OPR (TBA)">
+                            <img src="./tba.png" height="18" style="vertical-align:middle;opacity:0.85;"> ↕</th>
+                        <th onclick="sortGlanceBy('scoutEPA')"
+                            style="cursor:pointer; text-align:center; padding:10px 8px; border-bottom:2px solid #334155; color:#94a3b8;"
+                            title="Scouting EPA (Google Sheets)">
+                            <img src="./sheets.png" height="18" style="vertical-align:middle;opacity:0.85;"> ↕</th>
                     </tr>
                 </thead>
                 <tbody id="atAGlanceBody"></tbody>
@@ -1247,7 +1271,7 @@
         <div class="detail-tabs" id="analysisTabs" style="margin-top:0; margin-bottom:12px;">
             <button class="detail-tab-btn active" onclick="switchAnalysisTab('statbotics')"><img src="statbotics.ico" class="source-logo">Statbotics</button>
             <button class="detail-tab-btn" onclick="switchAnalysisTab('tba')"><img src="tba.png" class="source-logo">TBA</button>
-            <button class="detail-tab-btn" onclick="switchAnalysisTab('scouting')">Scouting</button>
+            <button class="detail-tab-btn" onclick="switchAnalysisTab('scouting')"><img src="sheets.png" class="source-logo">Scouting</button>
         </div>
 
         <div id="analysis-tab-statbotics">
@@ -1336,7 +1360,42 @@
         </div>
 
         <div id="analysis-tab-scouting" style="display:none;">
-            <p style="color:#94a3b8; margin-top:20px;">Custom match scouting data coming soon.</p>
+            <div style="margin-bottom:8px;">
+                <span id="scouting-fusion-status" style="color:#64748b;font-size:0.78em;"></span>
+            </div>
+            <div class="detail-tabs" id="scoutingSubTabs"
+                style="margin-top:0;margin-bottom:12px;border-bottom:1px solid #1e293b;padding-bottom:4px;">
+                <button class="detail-tab-btn active" onclick="switchScoutingSubTab('teams')">Teams</button>
+                <button class="detail-tab-btn" onclick="switchScoutingSubTab('curation')">Data Curation</button>
+            </div>
+
+            <div id="scouting-subtab-teams">
+                <div class="chart-container-main">
+                    <canvas id="scoutingComparisonChart"></canvas>
+                </div>
+                <div class="tbl-scroll">
+                <table id="scoutingTeamTable" style="display:none;">
+                    <thead>
+                        <tr>
+                            <th></th>
+                            <th onclick="sortScoutingBy('teamNumber')" style="cursor:pointer;">Team ↕</th>
+                            <th onclick="sortScoutingBy('total')" style="cursor:pointer;">Scout EPA ↕</th>
+                            <th onclick="sortScoutingBy('auto')" style="cursor:pointer;">Auto ↕</th>
+                            <th onclick="sortScoutingBy('teleop')" style="cursor:pointer;">Teleop ↕</th>
+                            <th onclick="sortScoutingBy('endgame')" style="cursor:pointer;">Endgame ↕</th>
+                            <th onclick="sortScoutingBy('matches')" style="cursor:pointer;">Matches ↕</th>
+                        </tr>
+                    </thead>
+                    <tbody id="scoutingTeamBody"></tbody>
+                </table>
+                </div>
+            </div>
+
+            <div id="scouting-subtab-curation" style="display:none;">
+                <div id="scouting-curation-content">
+                    <p style="color:#64748b;font-style:italic;margin-top:20px;">Loading curation data…</p>
+                </div>
+            </div>
         </div>
     </div>
 
