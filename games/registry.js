@@ -4,10 +4,11 @@
 // `eventSources` field — no changes to this file needed for new events.
 
 import reefscape2025 from './2025_reefscape.js';
+import rebuilt2026   from './2026_rebuilt.js';
 
 const GAME_REGISTRY = {
     '2025': reefscape2025,
-    // '2026': rebuilt2026,
+    '2026': rebuilt2026,
 };
 
 // Merged event sources from all registered game configs.
@@ -139,6 +140,29 @@ export function fuseScoutingWithTBA(teamNumber, observations, allByMatch, tbaMat
     const reportingMode = detectCumulativeReportingMode(tbaMatches, teleopFuseStats);
     const isCumulative  = reportingMode !== 'separate'; // treat 'unknown' as cumulative (safer default)
 
+    // Pre-compute per-team aggregates for assumption filling in fuseCustom (2026+).
+    // Skipped entirely for game configs that don't define fuseCustom (e.g. 2025).
+    const teamAggregates = {};
+    if (gameConfig.fuseCustom) {
+        const allObsByTeam = {};
+        for (const matchObs of Object.values(allByMatch)) {
+            for (const [tn, row] of Object.entries(matchObs)) {
+                if (!allObsByTeam[tn]) allObsByTeam[tn] = [];
+                allObsByTeam[tn].push(row);
+            }
+        }
+        const tbaByMatch = {};
+        for (const m of tbaMatches) tbaByMatch[m.matchNumber] = m;
+
+        for (const [tn, rows] of Object.entries(allObsByTeam)) {
+            const agg = gameConfig.aggregateTeam(rows);
+            if (gameConfig.enrichAggregateWithTBA) {
+                gameConfig.enrichAggregateWithTBA(tn, rows, agg, tbaByMatch);
+            }
+            teamAggregates[tn] = agg;
+        }
+    }
+
     const fusedByMatch = {};
     const coverage = { total: 0, withTBA: 0, withFullScouting: 0 };
 
@@ -202,6 +226,13 @@ export function fuseScoutingWithTBA(teamNumber, observations, allByMatch, tbaMat
             }
         }
 
+        // ── Game-specific custom fusion hook (e.g. per-shift allocation) ──────
+        if (gameConfig.fuseCustom) {
+            const custom = gameConfig.fuseCustom(obs, allianceRows, tbaMatch, teamStr,
+                                                 { allianceTeams, teamAggregates });
+            Object.assign(fused, custom);
+        }
+
         fusedByMatch[obs.matchNumber] = fused;
     }
 
@@ -213,6 +244,7 @@ export function fuseScoutingWithTBA(teamNumber, observations, allByMatch, tbaMat
         ...teleopFuseStats.map(s => s.key),
         ...splitFuseStats.flatMap(s => [s.autoKey, s.teleopKey]),
         ...robotFuseStats.map(s => s.key),
+        ...(gameConfig.customFuseKeys ?? []),
     ];
 
     const stats = {};

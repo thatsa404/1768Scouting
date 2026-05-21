@@ -406,6 +406,17 @@ export default {
         autoMobilityPts: 1, endgamePts: 1,
     },
 
+    // Per-match EPA used for outlier detection. Uses aggregateTeam so key names
+    // match scoringWeights; derives the two non-direct fields (mobility, endgame).
+    computeMatchEPA(row) {
+        const agg = this.aggregateTeam([row]);
+        const autoMobilityPts = row.movedInAuto ? 3 : 0;
+        const pos = (row.endPosition || '').toLowerCase();
+        const endgamePts = pos === 'deep climb' ? 12 : pos === 'shallow climb' ? 6 : pos === 'parked' ? 2 : 0;
+        const flat = { ...agg, autoMobilityPts, endgamePts };
+        return Object.entries(this.scoringWeights).reduce((sum, [k, w]) => sum + (flat[k] ?? 0) * w, 0);
+    },
+
     // ── Display fields ────────────────────────────────────────────────────────
     displayFields: [
         { group: 'Overview' },

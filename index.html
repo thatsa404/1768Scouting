@@ -1049,6 +1049,12 @@
         <div class="chart-container-prep">
             <canvas id="allianceComparisonChart"></canvas>
         </div>
+        <div style="text-align:center;margin:10px 0 4px;">
+            <button onclick="openScoutingBreakdown()"
+                style="background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:6px;padding:7px 20px;font-size:0.85em;font-weight:600;cursor:pointer;letter-spacing:0.03em;">
+                Detailed Breakdown
+            </button>
+        </div>
 
         <div class="prep-container">
             <div class="prep-column red-prep">
@@ -1193,7 +1199,8 @@
 
             <div style="margin-top:24px;padding-top:16px;border-top:1px solid #1e293b;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
                 <button onclick="saveScoutingArchive()" style="background:#1e293b;color:#60a5fa;border:1px solid #60a5fa;">↓ Save Event Archive</button>
-                <button onclick="clearCache()" style="background:#1e293b;color:#ef4444;border:1px solid #ef4444;">Clear Cache</button>
+                <button onclick="clearCache()" style="background:#1e293b;color:#ef4444;border:1px solid #ef4444;">Clear API Data</button>
+                <button onclick="clearEvent()" style="background:#1e293b;color:#ef4444;border:1px solid #ef4444;">Clear Event</button>
             </div>
             </div><!-- end z-index wrapper -->
         </div>
@@ -1373,6 +1380,7 @@
                 <div class="chart-container-main">
                     <canvas id="scoutingComparisonChart"></canvas>
                 </div>
+                <div id="scouting-table-toggle" style="margin:8px 0;"></div>
                 <div class="tbl-scroll">
                 <table id="scoutingTeamTable" style="display:none;">
                     <thead>
@@ -1544,6 +1552,19 @@
 
         <div id="tab-pit-data" class="detail-tab-content" style="display:none;">
             <p style="color:#888; margin-top:40px; text-align:center;">Pit data coming soon.</p>
+        </div>
+    </div>
+
+    <div id="scoutingBreakdownModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.88); z-index:150; overflow-y:auto; padding:20px; box-sizing:border-box;">
+        <div style="max-width:860px; margin:0 auto; background:#0f172a; border-radius:12px; padding:20px; border:1px solid #1e293b;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                <h2 style="margin:0; font-size:1.05em; color:#f1f5f9; font-weight:700;">Scouting Breakdown</h2>
+                <button onclick="closeScoutingBreakdown()"
+                    style="background:#1e293b; color:#94a3b8; border:1px solid #334155; border-radius:6px; padding:6px 14px; font-size:0.82em; font-weight:600; cursor:pointer;">
+                    Close
+                </button>
+            </div>
+            <div id="scoutingBreakdownContent"></div>
         </div>
     </div>
 
