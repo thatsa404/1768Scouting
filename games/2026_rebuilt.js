@@ -13,7 +13,12 @@ export default {
     name: 'REBUILT',
 
     // ── Event sources ─────────────────────────────────────────────────────────
-    eventSources: {},
+    eventSources: {
+        '2026necmp1': {
+            url:    'https://docs.google.com/spreadsheets/d/1ojsk9s9Tjc6-ZWRj-7yJsEaUwLkIFcg9wdnAA02aXUQ/edit?gid=0#gid=0',
+            pitUrl: 'https://docs.google.com/spreadsheets/d/14ZDaH9QYnHnpaf0fCz_WMjRwNNyD7ud41nXrrQe2ncU/edit?gid=2048789223#gid=2048789223',
+        },
+    },
 
     // ── Column map ────────────────────────────────────────────────────────────
     defaultColumns: {
@@ -70,7 +75,7 @@ export default {
             autoAction2:      get('autoAction2').trim(),
             climbedAuto:      bool('climbedAuto'),
             successClimbAuto: bool('successClimbAuto'),
-            fuelScoredAuto:   bool('fuelScoredAuto'),
+            fuelScoredAuto:   num('fuelScoredAuto'),  // estimated count scored by this robot in auto
             shift1Scorer:     bool('shift1Scorer'),
             shift1Shuttler:   bool('shift1Shuttler'),
             shift1Defender:   bool('shift1Defender'),
@@ -114,7 +119,8 @@ export default {
             noShows:  rows.filter(r => r.noShow).length,
 
             // Auto
-            autoFuelPct:         pct(r => r.fuelScoredAuto),
+            autoFuelPct:         pct(r => (r.fuelScoredAuto ?? 0) > 0),
+            avgAutoFuel:         avg(r => r.fuelScoredAuto ?? 0),
             autoClimbPct:        pct(r => r.climbedAuto),
             autoClimbSuccessPct: pct(r => r.successClimbAuto),
             autoClimbPts:        avg(r => r.climbedAuto ? 15 : 0),
@@ -158,14 +164,8 @@ export default {
 
     // ── TBA fusion stat definitions ───────────────────────────────────────────
 
-    // Auto fuel: teams that flagged fuelScoredAuto share TBA's auto total equally; non-scorers get 0.
-    autoFuseStats: [
-        {
-            key: 'autoFuelFused',
-            scout: r => r.fuelScoredAuto ? 1 : 0,
-            tba: b => b.hubScore?.autoCount ?? null,
-        },
-    ],
+    // Auto fuel is now allocated in fuseCustom using numeric estimates with per-team avg fallback.
+    autoFuseStats: [],
 
     teleopFuseStats: [],
     splitFuseStats:  [],
@@ -195,7 +195,7 @@ export default {
     ],
 
     // Keys produced by fuseCustom — included in final per-match averages.
-    customFuseKeys: ['teleFuelFused', 'endgameFuelFused'],
+    customFuseKeys: ['autoFuelFused', 'teleFuelFused', 'endgameFuelFused'],
 
     // ── Active-scorer rate enrichment ─────────────────────────────────────────
     // Mutates agg to add activeScorerRate: fraction of active-hub period appearances
@@ -305,6 +305,22 @@ export default {
             return (agg.activeScorerRate ?? 0) * (agg.avgScoringEff || 1);
         };
 
+        // Auto fuel: share TBA's autoCount by each robot's scouted estimate.
+        // Unscouted partners use their historical avgAutoFuel as the weight.
+        let autoFuelFused = null;
+        const autoTotal = hs.autoCount ?? null;
+        if (autoTotal != null) {
+            const getAutoWeight = (row, slotIdx) => {
+                if (row !== null) return row.fuelScoredAuto ?? 0;
+                const agg = teamAggregates?.[allianceTeams?.[slotIdx]];
+                return agg?.avgAutoFuel ?? 1;
+            };
+            const myAutoWeight       = getAutoWeight(myIdx >= 0 ? (allianceRows[myIdx] ?? obs) : obs, myIdx);
+            const allianceAutoWeight = allianceRows.reduce((sum, r, i) => sum + getAutoWeight(r, i), 0);
+            const autoShare = allianceAutoWeight > 0 ? myAutoWeight / allianceAutoWeight : 1 / 3;
+            autoFuelFused = autoShare * autoTotal;
+        }
+
         let teleFuelFused    = null;
         let endgameFuelFused = null;
         for (const { tbaFuel, scorerField, endgame } of shiftDefs) {
@@ -328,7 +344,7 @@ export default {
             else         teleFuelFused    = (teleFuelFused    ?? 0) + contribution;
         }
 
-        return { teleFuelFused, endgameFuelFused };
+        return { autoFuelFused, teleFuelFused, endgameFuelFused };
     },
 
     // ── Derived fused totals ──────────────────────────────────────────────────
@@ -341,7 +357,7 @@ export default {
     matchBreakdownColumns: [
         {
             label: 'Auto Fuel',
-            raw:   r => r.fuelScoredAuto ? '✓' : '—',
+            raw:   r => (r.fuelScoredAuto ?? 0) > 0 ? String(r.fuelScoredAuto) : '—',
             fused: s => s.autoFuelFused ?? null,
         },
         {
@@ -404,9 +420,12 @@ export default {
 
     // Rich scouting detail rendered in the team detail overlay's Scouting tab.
     // Replaces the generic displayFields grid when defined.
-    renderScoutingDetail({ rawStats: s, fusedStats, getValue, isFused, fused }) {
+    renderScoutingDetail({ rawStats: s, fusedStats, getValue, isFused, fused, allScoutBreakdowns = [], rankTier }) {
         const BG   = { S: '#f59e0b', A: '#4ade80', B: '#a855f7', C: '#64748b' };
-        const tier = (val, [s, a, b]) => val >= s ? 'S' : val >= a ? 'A' : val >= b ? 'B' : 'C';
+        const tier = (val, fieldFn) => {
+            if (val == null) return 'C';
+            return rankTier ? rankTier(allScoutBreakdowns.map(fieldFn), val) : 'C';
+        };
         const badge = (t) => {
             const fg = t === 'C' ? '#f8fafc' : '#0f172a';
             return `<span style="display:inline-block;padding:1px 7px;border-radius:4px;font-size:0.72em;font-weight:800;background:${BG[t]};color:${fg};">${t}</span>`;
@@ -427,15 +446,15 @@ export default {
 
         // ── Top-line metric cards ─────────────────────────────────────────────
         const topMetrics = [
-            { label: 'Total EPA',    val: epa.total,       fmt: v => v.toFixed(1), thr: [45,25,10], fDot: dot('teleFuelFused') || dot('autoFuelFused') },
-            { label: 'Tele Fuel',    val: teleFuel,        fmt: v => v.toFixed(1), thr: [30,15,5],  fDot: dot('teleFuelFused') },
-            { label: 'Auto Pts',     val: autoPts,         fmt: v => v.toFixed(1), thr: [12,6,2],   fDot: dot('autoFuelFused') },
-            { label: 'Endgame Pts',  val: endPts,          fmt: v => v.toFixed(1), thr: [25,15,5],  fDot: dot('endgamePts') },
-            { label: 'Avg Eff',      val: s.avgScoringEff, fmt: v => v.toFixed(1), thr: [8,6,4],    fDot: '' },
+            { label: 'Total EPA',    val: epa.total,       fmt: v => v.toFixed(1), tierFn: b => b.total,        fDot: dot('teleFuelFused') || dot('autoFuelFused') },
+            { label: 'Tele Fuel',    val: teleFuel,        fmt: v => v.toFixed(1), tierFn: b => b.teleFuelFused, fDot: dot('teleFuelFused') },
+            { label: 'Auto Pts',     val: autoPts,         fmt: v => v.toFixed(1), tierFn: b => b.auto,          fDot: dot('autoFuelFused') },
+            { label: 'Endgame Pts',  val: endPts,          fmt: v => v.toFixed(1), tierFn: b => b.endgame,       fDot: dot('endgamePts') },
+            { label: 'Avg Eff',      val: s.avgScoringEff, fmt: v => v.toFixed(1), tierFn: b => b.avgScoringEff, fDot: '' },
         ];
 
         const topCardsHtml = topMetrics.map(m => {
-            const t  = m.val != null ? tier(m.val, m.thr) : 'C';
+            const t  = m.val != null ? tier(m.val, m.tierFn) : 'C';
             const bc = BG[t];
             return `
             <div style="background:rgba(255,255,255,0.02);border:1px solid ${bc}44;border-radius:8px;padding:12px;text-align:center;">
@@ -493,7 +512,7 @@ export default {
         ).join('');
 
         // ── Qualitative cards ─────────────────────────────────────────────────
-        const effTier = s.avgScoringEff != null ? tier(s.avgScoringEff, [8,6,4]) : 'C';
+        const effTier = s.avgScoringEff != null ? tier(s.avgScoringEff, b => b.avgScoringEff) : 'C';
         const qualCardsHtml = [
             { label: 'Scoring Eff',   val: s.avgScoringEff,   t: effTier, suffix: '/10' },
             { label: 'Passing Skill', val: s.avgPassingSkill, t: null,    suffix: '/10' },

@@ -591,6 +591,7 @@
         .header-left {
             display: flex;
             align-items: center;
+            gap: 14px;
         }
 
         .prep-tier-badge {
@@ -1206,6 +1207,17 @@
         </div>
 
         <div id="home-tab-overview" style="display:none;">
+            <div style="display:flex; gap:6px; margin-bottom:10px; justify-content:flex-end; align-items:center;">
+                <button id="dashboardCondenseBtn" onclick="toggleDashboardCondense()"
+                    style="background:transparent;color:#64748b;border:1px solid #334155;border-radius:5px;padding:3px 10px;font-size:0.72em;font-weight:600;cursor:pointer;">
+                    Expand</button>
+                <button id="dashboardChartToggleBtn" onclick="toggleAnalysisChart()"
+                    style="background:transparent;color:#64748b;border:1px solid #334155;border-radius:5px;padding:3px 10px;font-size:0.72em;font-weight:600;cursor:pointer;">
+                    Hide Chart</button>
+            </div>
+            <div id="dashboardChartContainer" style="overflow-x:auto; margin-bottom:16px;">
+                <canvas id="dashboardComparisonChart"></canvas>
+            </div>
             <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:14px; align-items:center;">
                 <span
                     style="color:#94a3b8; font-size:0.8em; font-weight:600; text-transform:uppercase; letter-spacing:0.05em;">Tier
@@ -1279,10 +1291,14 @@
             <button class="detail-tab-btn active" onclick="switchAnalysisTab('statbotics')"><img src="statbotics.ico" class="source-logo">Statbotics</button>
             <button class="detail-tab-btn" onclick="switchAnalysisTab('tba')"><img src="tba.png" class="source-logo">TBA</button>
             <button class="detail-tab-btn" onclick="switchAnalysisTab('scouting')"><img src="sheets.png" class="source-logo">Scouting</button>
+            <button class="detail-tab-btn" onclick="switchAnalysisTab('algorithms')">Algorithms</button>
+            <button id="analysisChartToggleBtn" onclick="toggleAnalysisChart()"
+                style="margin-left:auto;background:transparent;color:#64748b;border:1px solid #334155;border-radius:5px;padding:3px 10px;font-size:0.72em;font-weight:600;cursor:pointer;">
+                Hide Chart</button>
         </div>
 
         <div id="analysis-tab-statbotics">
-            <div class="chart-container-main">
+            <div id="statboticsChartContainer" class="chart-container-main">
                 <canvas id="teamComparisonChart"></canvas>
             </div>
             <div class="tbl-scroll">
@@ -1310,7 +1326,7 @@
                 <button class="detail-tab-btn" onclick="switchTBATab('matches')">Match Influence</button>
             </div>
             <div id="tba-tab-teams">
-                <div class="chart-container-main">
+                <div id="tbaChartContainer" class="chart-container-main">
                     <canvas id="tbaComparisonChart"></canvas>
                 </div>
                 <p id="tbaGlobalIgnoreNote" style="display:none; color:#fbbf24; font-size:0.85em; margin:8px 0;"></p>
@@ -1377,7 +1393,7 @@
             </div>
 
             <div id="scouting-subtab-teams">
-                <div class="chart-container-main">
+                <div id="scoutingChartContainer" class="chart-container-main">
                     <canvas id="scoutingComparisonChart"></canvas>
                 </div>
                 <div id="scouting-table-toggle" style="margin:8px 0;"></div>
@@ -1404,6 +1420,206 @@
                     <p style="color:#64748b;font-style:italic;margin-top:20px;">Loading curation data…</p>
                 </div>
             </div>
+        </div>
+
+        <div id="analysis-tab-algorithms" style="display:none; max-width:860px; padding-bottom:40px;">
+
+            <!-- Intro -->
+            <p style="color:#94a3b8; font-size:0.92em; line-height:1.65; margin:0 0 28px;">
+                This app pulls data from three different sources, each using a different method to estimate how good a team is.
+                Understanding <em>how</em> each number is calculated helps you decide how much to trust it — and when to trust your own eyes instead.
+            </p>
+
+            <!-- Comparison table -->
+            <div style="overflow-x:auto; margin-bottom:32px;">
+            <table style="width:100%; border-collapse:collapse; font-size:0.85em;">
+                <thead>
+                    <tr style="border-bottom:2px solid #334155;">
+                        <th style="padding:8px 12px; text-align:left; color:#64748b;"></th>
+                        <th style="padding:8px 12px; text-align:center; color:#f59e0b;">Statbotics EPA</th>
+                        <th style="padding:8px 12px; text-align:center; color:#60a5fa;">TBA OPR</th>
+                        <th style="padding:8px 12px; text-align:center; color:#4ade80;">Scouting EPA</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom:1px solid #1e293b;">
+                        <td style="padding:8px 12px; color:#94a3b8; font-weight:600;">Data source</td>
+                        <td style="padding:8px 12px; text-align:center; color:#f1f5f9;">All FRC matches ever played</td>
+                        <td style="padding:8px 12px; text-align:center; color:#f1f5f9;">This event's match scores</td>
+                        <td style="padding:8px 12px; text-align:center; color:#f1f5f9;">Your scouts' observations</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #1e293b;">
+                        <td style="padding:8px 12px; color:#94a3b8; font-weight:600;">Updates</td>
+                        <td style="padding:8px 12px; text-align:center; color:#f1f5f9;">After each match (live sync)</td>
+                        <td style="padding:8px 12px; text-align:center; color:#f1f5f9;">After each match (live sync)</td>
+                        <td style="padding:8px 12px; text-align:center; color:#f1f5f9;">When you sync the sheet</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #1e293b;">
+                        <td style="padding:8px 12px; color:#94a3b8; font-weight:600;">Needs matches played?</td>
+                        <td style="padding:8px 12px; text-align:center; color:#f1f5f9;">No — works before the event</td>
+                        <td style="padding:8px 12px; text-align:center; color:#f59e0b;">Yes — needs several matches</td>
+                        <td style="padding:8px 12px; text-align:center; color:#f1f5f9;">No — one observation counts</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #1e293b;">
+                        <td style="padding:8px 12px; color:#94a3b8; font-weight:600;">Knows <em>how</em> points scored?</td>
+                        <td style="padding:8px 12px; text-align:center; color:#f59e0b;">Partially (component EPAs)</td>
+                        <td style="padding:8px 12px; text-align:center; color:#ef4444;">No — total score only</td>
+                        <td style="padding:8px 12px; text-align:center; color:#4ade80;">Yes — full per-action breakdown</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:8px 12px; color:#94a3b8; font-weight:600;">Can be fooled by…</td>
+                        <td style="padding:8px 12px; text-align:center; color:#f1f5f9;">Weak/strong alliance partners</td>
+                        <td style="padding:8px 12px; text-align:center; color:#f1f5f9;">Weak/strong alliance partners</td>
+                        <td style="padding:8px 12px; text-align:center; color:#f1f5f9;">Inattentive or inconsistent scouts</td>
+                    </tr>
+                </tbody>
+            </table>
+            </div>
+
+            <!-- EPA -->
+            <div style="border-left:4px solid #f59e0b; padding-left:16px; margin-bottom:28px;">
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+                    <img src="statbotics.ico" style="width:20px; height:20px; border-radius:3px;">
+                    <span style="color:#f59e0b; font-size:1em; font-weight:800; letter-spacing:0.04em;">STATBOTICS — Expected Points Added (EPA)</span>
+                </div>
+                <p style="color:#cbd5e1; font-size:0.88em; line-height:1.7; margin:0 0 10px;">
+                    EPA is a statistical model that estimates <strong style="color:#f1f5f9;">how many points a team contributes to their alliance's score</strong>, on average, per match.
+                    It uses every match that team has ever played — not just at this event — so it arrives pre-loaded with a track record before a single match is played here.
+                </p>
+                <p style="color:#94a3b8; font-size:0.85em; line-height:1.65; margin:0 0 10px;">
+                    <strong style="color:#f1f5f9;">How it works:</strong>
+                    After each match, the model looks at the alliance's total score and adjusts each team's EPA up or down depending on whether the alliance scored more or less than expected.
+                    Teams that consistently help their alliances outscore predictions earn a higher EPA; teams that drag scores down earn a lower one.
+                    It's similar to how sports analytics models (like baseball's WAR) credit or penalize individual players based on team outcomes.
+                </p>
+                <p style="color:#94a3b8; font-size:0.85em; line-height:1.65; margin:0 0 6px;">
+                    <strong style="color:#f1f5f9;">What the "ceiling" is:</strong>
+                    The ceiling is a projection of where EPA could realistically reach by the end of the season, fitted to each team's improvement curve. It's most useful early in the season.
+                </p>
+                <div style="display:flex; gap:20px; flex-wrap:wrap; margin-top:10px;">
+                    <div style="flex:1; min-width:180px; background:rgba(245,158,11,0.07); border-radius:6px; padding:10px 14px;">
+                        <div style="color:#f59e0b; font-size:0.72em; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; margin-bottom:5px;">Strengths</div>
+                        <ul style="color:#cbd5e1; font-size:0.82em; line-height:1.65; margin:0; padding-left:16px;">
+                            <li>Works before the event starts</li>
+                            <li>Accounts for schedule strength</li>
+                            <li>Breaks into auto / teleop / endgame</li>
+                            <li>Huge historical dataset behind it</li>
+                        </ul>
+                    </div>
+                    <div style="flex:1; min-width:180px; background:rgba(239,68,68,0.06); border-radius:6px; padding:10px 14px;">
+                        <div style="color:#f87171; font-size:0.72em; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; margin-bottom:5px;">Limitations</div>
+                        <ul style="color:#cbd5e1; font-size:0.82em; line-height:1.65; margin:0; padding-left:16px;">
+                            <li>Doesn't know <em>how</em> points were scored</li>
+                            <li>Can be slow to reflect sudden improvements</li>
+                            <li>Relies on official score data, which can have errors</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- OPR -->
+            <div style="border-left:4px solid #60a5fa; padding-left:16px; margin-bottom:28px;">
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+                    <img src="tba.png" style="width:20px; height:20px; border-radius:3px;">
+                    <span style="color:#60a5fa; font-size:1em; font-weight:800; letter-spacing:0.04em;">THE BLUE ALLIANCE — Offensive Power Rating (OPR)</span>
+                </div>
+                <p style="color:#cbd5e1; font-size:0.88em; line-height:1.7; margin:0 0 10px;">
+                    OPR is a simpler, purely math-based estimate of <strong style="color:#f1f5f9;">how many points a team contributes to their alliance per match</strong>, calculated only from matches played at this event.
+                </p>
+                <p style="color:#94a3b8; font-size:0.85em; line-height:1.65; margin:0 0 10px;">
+                    <strong style="color:#f1f5f9;">How it works:</strong>
+                    Each match gives us an equation: Team A + Team B + Team C = Alliance Score.
+                    Once enough matches are played, we have a large set of these equations — one per alliance per match.
+                    OPR solves them all simultaneously using a technique called <em>least-squares regression</em>, finding the individual scores that best explain every alliance total.
+                    It's the same kind of math used to fit a line through a scatter plot.
+                </p>
+                <p style="color:#94a3b8; font-size:0.85em; line-height:1.65; margin:0 0 6px;">
+                    <strong style="color:#f1f5f9;">Why it needs several matches:</strong>
+                    With only a few matches played, there aren't enough equations to solve reliably, so OPR is unstable early in the event.
+                    By qualification round 20+, it usually settles into a stable and trustworthy estimate.
+                </p>
+                <div style="display:flex; gap:20px; flex-wrap:wrap; margin-top:10px;">
+                    <div style="flex:1; min-width:180px; background:rgba(96,165,250,0.07); border-radius:6px; padding:10px 14px;">
+                        <div style="color:#60a5fa; font-size:0.72em; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; margin-bottom:5px;">Strengths</div>
+                        <ul style="color:#cbd5e1; font-size:0.82em; line-height:1.65; margin:0; padding-left:16px;">
+                            <li>Based entirely on real scores at this event</li>
+                            <li>Not biased by prior-season performance</li>
+                            <li>Easy to verify — the math is transparent</li>
+                        </ul>
+                    </div>
+                    <div style="flex:1; min-width:180px; background:rgba(239,68,68,0.06); border-radius:6px; padding:10px 14px;">
+                        <div style="color:#f87171; font-size:0.72em; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; margin-bottom:5px;">Limitations</div>
+                        <ul style="color:#cbd5e1; font-size:0.82em; line-height:1.65; margin:0; padding-left:16px;">
+                            <li>Unreliable until ~6–8 matches are played</li>
+                            <li>Only knows total alliance score, not who did what</li>
+                            <li>Teams that always play together can be confused by the model</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Scouting -->
+            <div style="border-left:4px solid #4ade80; padding-left:16px; margin-bottom:28px;">
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+                    <img src="sheets.png" style="width:20px; height:20px; border-radius:3px;">
+                    <span style="color:#4ade80; font-size:1em; font-weight:800; letter-spacing:0.04em;">SCOUTING — Custom Game Model (2026 REBUILT)</span>
+                </div>
+                <p style="color:#cbd5e1; font-size:0.88em; line-height:1.7; margin:0 0 10px;">
+                    Scouting data comes from <strong style="color:#f1f5f9;">human observers watching each match</strong> and recording exactly what each robot does — which shift they played in, whether they scored fuel, whether they climbed, and how effective their scoring was.
+                    This app processes those observations into a custom EPA estimate built specifically for the 2026 game.
+                </p>
+                <p style="color:#94a3b8; font-size:0.85em; line-height:1.65; margin:0 0 10px;">
+                    <strong style="color:#f1f5f9;">How the scouting EPA is calculated:</strong>
+                    For each team and each match, scouts record actions (Scorer / Shuttler / Defender / Died per shift, fuel counts, climb level).
+                    These are averaged across all observed matches to get rates — for example, "this team scores fuel in 80% of their active shifts."
+                    A scoring model then converts those rates into an expected point contribution, similar to EPA.
+                </p>
+                <p style="color:#94a3b8; font-size:0.85em; line-height:1.65; margin:0 0 10px;">
+                    <strong style="color:#f1f5f9;">What TBA fusion does:</strong>
+                    Raw scouting estimates can be noisy — scouts aren't always sure exactly how many fuel pieces each robot scored.
+                    When TBA match breakdown data is available, this app uses a technique called <em>share-weighting</em>: it takes the real total fuel count from the official breakdown,
+                    then divides it among the three alliance partners proportionally to their scouted contribution rates.
+                    The result is more accurate than either source alone.
+                </p>
+                <p style="color:#94a3b8; font-size:0.85em; line-height:1.65; margin:0 0 6px;">
+                    <strong style="color:#f1f5f9;">The shift percentages shown use conditional probabilities:</strong>
+                    Because the 2026 game alternates which hub is active each shift, a team can't score fuel in a shift where their hub is off.
+                    Rather than penalizing a team for a hub that was inactive, the app only counts matches where that hub was active when computing the shift scorer percentage.
+                    This gives you a true "how often did they score when they <em>could</em>" rate.
+                </p>
+                <div style="display:flex; gap:20px; flex-wrap:wrap; margin-top:10px;">
+                    <div style="flex:1; min-width:180px; background:rgba(74,222,128,0.07); border-radius:6px; padding:10px 14px;">
+                        <div style="color:#4ade80; font-size:0.72em; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; margin-bottom:5px;">Strengths</div>
+                        <ul style="color:#cbd5e1; font-size:0.82em; line-height:1.65; margin:0; padding-left:16px;">
+                            <li>Only source that knows <em>how</em> points were scored</li>
+                            <li>Works immediately — one match is enough</li>
+                            <li>Captures things the score doesn't: defending, dying, skill</li>
+                            <li>Fused with official data when available for extra accuracy</li>
+                        </ul>
+                    </div>
+                    <div style="flex:1; min-width:180px; background:rgba(239,68,68,0.06); border-radius:6px; padding:10px 14px;">
+                        <div style="color:#f87171; font-size:0.72em; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; margin-bottom:5px;">Limitations</div>
+                        <ul style="color:#cbd5e1; font-size:0.82em; line-height:1.65; margin:0; padding-left:16px;">
+                            <li>Quality depends entirely on scout accuracy and attention</li>
+                            <li>Data entry errors can skew results significantly</li>
+                            <li>Fewer matches observed = less reliable averages</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bottom note -->
+            <div style="background:#1e293b; border-radius:8px; padding:14px 18px; border-left:3px solid #475569;">
+                <p style="color:#94a3b8; font-size:0.85em; line-height:1.65; margin:0;">
+                    <strong style="color:#f1f5f9;">Which should you trust most?</strong>
+                    The short answer: use all three together.
+                    Before the event, EPA gives you the best head start.
+                    Once 15+ matches are played, OPR becomes a strong sanity check.
+                    Scouting data is your best window into <em>what a team actually does on the field</em> — especially for alliance selection, where understanding roles matters more than raw score totals.
+                    When all three agree, you can be confident. When they disagree, that's a signal to watch that team more carefully.
+                </p>
+            </div>
+
         </div>
     </div>
 

@@ -181,6 +181,7 @@ function epaRankTier(allTeams, myVal, fieldFn) {
     return r < 8 ? 'S' : r < 20 ? 'A' : r < 32 ? 'B' : 'C';
 }
 
+
 async function fetchTBA(endpoint) {
     const response = await fetch(`${TBA_BASE}${endpoint}`, {
         headers: { 'X-TBA-Auth-Key': TBA_KEY }
@@ -329,6 +330,8 @@ window.displaySchedule = async function () {
 };
 
 let prepChartInstance = null; // Global variable to handle chart destruction
+let breakdownRadarChartRed  = null;
+let breakdownRadarChartBlue = null;
 
 const rightPanelHistory = [];
 
@@ -429,7 +432,7 @@ window.viewMatchPrep = async function (matchKey) {
             <div class="prep-card-header" onclick="highlightTeam('${teamNum}')" style="cursor:pointer;">
                 <div class="header-left">
                     <span class="prep-team-number">${teamNum}</span>
-                    <div style="color:#94a3b8;font-size:0.78em;font-weight:600;margin-top:2px;">EPA ${team.currentEPA.toFixed(1)}</div>
+                    <div style="color:#94a3b8;font-size:0.78em;font-weight:600;">EPA ${team.currentEPA.toFixed(1)}</div>
                 </div>
                 ${tierBadge(tier, 'prep-tier-badge', 'Tier')}
             </div>
@@ -513,8 +516,53 @@ window.openScoutingBreakdown = async function () {
         return String(Math.round(v));
     };
 
+    // ── Radar chart ───────────────────────────────────────────────────────────
+    // Fuse each team to get autoFuelFused, then combine with autoClimbPts for auto EPA.
+    const allByMatch = indexObservationsByMatch(processed.observations);
+    const teamAutoEPA = {};
+    for (const tn of allTeams) {
+        const agg  = teamStats[tn];
+        if (!agg) { teamAutoEPA[tn] = 0; continue; }
+        const rows = byTeam[String(tn)];
+        const { rows: deduped } = deduplicateTeamRows(rows);
+        const fused = hasTBABreakdowns
+            ? fuseScoutingWithTBA(String(tn), deduped, allByMatch, tbaMatches, config)
+            : { available: false };
+        const fs = fused.available ? fused.stats : {};
+        const merged = { ...agg, ...fs };
+        teamAutoEPA[tn] = config.computeFusedEPABreakdown?.(merged)?.auto ?? (agg.autoClimbPts ?? 0);
+    }
+    const maxAutoEPA = Math.max(...Object.values(teamAutoEPA), 1);
+
+    const radarAxes = [
+        { label: 'Auto EPA',      fn: (s, tn) => teamAutoEPA[tn] / maxAutoEPA * 100 },
+        { label: 'Endgame Climb', fn: (s)     => s?.climbPct ?? 0 },
+        { label: 'Scoring Eff',   fn: (s)     => s?.avgScoringEff   != null ? (s.avgScoringEff   - 1) / 9 * 100 : 0 },
+        { label: 'Shuttling Eff', fn: (s)     => s?.avgPassingSkill != null ? (s.avgPassingSkill - 1) / 9 * 100 : 0 },
+        { label: 'Defense Eff',   fn: (s)     => s?.avgDefenseSkill != null ? (s.avgDefenseSkill - 1) / 9 * 100 : 0 },
+        { label: 'Reliability',   fn: (s)     => 100 - (s?.pctDied ?? 0) },
+    ];
+
+    const redPalette  = ['rgba(239,68,68',  'rgba(248,113,113', 'rgba(252,165,165'];
+    const bluePalette = ['rgba(59,130,246', 'rgba(96,165,250',  'rgba(147,197,253'];
+
+    const makeDatasets = (teams, palette) => teams.map((tn, i) => {
+        const stats = teamStats[tn];
+        const c = palette[i];
+        return {
+            label: `${tn}${String(tn) === OWN_TEAM ? ' ★' : ''}`,
+            data: radarAxes.map(ax => ax.fn(stats, tn)),
+            borderColor: `${c},1)`,
+            backgroundColor: `${c},0.08)`,
+            pointBackgroundColor: `${c},1)`,
+            pointRadius: 3,
+            borderWidth: 2,
+        };
+    });
+
+    // ── Table ─────────────────────────────────────────────────────────────────
     const thBase = 'padding:8px 10px;text-align:center;font-weight:700;font-size:0.82em;white-space:nowrap;border-bottom:2px solid';
-    let html = `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">
+    let tableHtml = `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">
         <thead><tr>
             <th style="padding:8px 10px;text-align:left;color:#475569;font-size:0.72em;border-bottom:2px solid #334155;"></th>
             ${redTeams.map(t  => `<th style="${thBase} #7f1d1d;color:#fca5a5;">${t}${ownStar(t)}</th>`).join('')}
@@ -524,24 +572,71 @@ window.openScoutingBreakdown = async function () {
 
     for (const field of config.displayFields) {
         if (field.group) {
-            html += `<tr style="background:#1e293b;">
+            tableHtml += `<tr style="background:#1e293b;">
                 <td colspan="${1 + allTeams.length}" style="padding:5px 10px;color:#64748b;font-size:0.7em;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">${field.group}</td>
             </tr>`;
             continue;
         }
-        html += `<tr style="border-bottom:1px solid #1e293b;">
+        tableHtml += `<tr style="border-bottom:1px solid #1e293b;">
             <td style="padding:5px 10px;color:#94a3b8;font-size:0.8em;white-space:nowrap;">${field.label}</td>
             ${redTeams.map(t  => `<td style="padding:5px 10px;text-align:center;font-size:0.82em;">${fmtVal(teamStats[t],  field)}</td>`).join('')}
             ${blueTeams.map(t => `<td style="padding:5px 10px;text-align:center;font-size:0.82em;">${fmtVal(teamStats[t], field)}</td>`).join('')}
         </tr>`;
     }
 
-    html += `</tbody></table></div>`;
-    content.innerHTML = html;
+    tableHtml += `</tbody></table></div>`;
+
+    content.innerHTML = `
+        <div style="display:flex;gap:12px;margin-bottom:20px;">
+            <div style="flex:1;text-align:center;">
+                <div style="font-size:0.75em;font-weight:700;color:#fca5a5;letter-spacing:0.06em;margin-bottom:6px;">RED ALLIANCE</div>
+                <canvas id="breakdownRadarRed"  width="370" height="310"></canvas>
+            </div>
+            <div style="flex:1;text-align:center;">
+                <div style="font-size:0.75em;font-weight:700;color:#93c5fd;letter-spacing:0.06em;margin-bottom:6px;">BLUE ALLIANCE</div>
+                <canvas id="breakdownRadarBlue" width="370" height="310"></canvas>
+            </div>
+        </div>
+        ${tableHtml}
+    `;
+
+    // Render both radars after DOM is updated
+    if (breakdownRadarChartRed)  { breakdownRadarChartRed.destroy();  breakdownRadarChartRed  = null; }
+    if (breakdownRadarChartBlue) { breakdownRadarChartBlue.destroy(); breakdownRadarChartBlue = null; }
+
+    const radarOptions = {
+        responsive: false,
+        scales: {
+            r: {
+                min: 0, max: 100,
+                ticks: { stepSize: 25, color: '#475569', backdropColor: 'transparent', font: { size: 10 } },
+                grid:        { color: '#1e293b' },
+                angleLines:  { color: '#334155' },
+                pointLabels: { color: '#94a3b8', font: { size: 11 } },
+            },
+        },
+        plugins: {
+            legend: {
+                position: 'bottom',
+                labels: { color: '#94a3b8', boxWidth: 12, font: { size: 11 }, padding: 8 },
+            },
+            tooltip: {
+                callbacks: { label: ctx => `${ctx.dataset.label}: ${Math.round(ctx.raw)}` },
+            },
+        },
+    };
+
+    const axisLabels = radarAxes.map(a => a.label);
+    breakdownRadarChartRed  = new Chart(document.getElementById('breakdownRadarRed').getContext('2d'),
+        { type: 'radar', data: { labels: axisLabels, datasets: makeDatasets(redTeams,  redPalette)  }, options: radarOptions });
+    breakdownRadarChartBlue = new Chart(document.getElementById('breakdownRadarBlue').getContext('2d'),
+        { type: 'radar', data: { labels: axisLabels, datasets: makeDatasets(blueTeams, bluePalette) }, options: radarOptions });
 };
 
 window.closeScoutingBreakdown = function () {
     document.getElementById('scoutingBreakdownModal').style.display = 'none';
+    if (breakdownRadarChartRed)  { breakdownRadarChartRed.destroy();  breakdownRadarChartRed  = null; }
+    if (breakdownRadarChartBlue) { breakdownRadarChartBlue.destroy(); breakdownRadarChartBlue = null; }
 };
 
 function renderPrepChart(redTeams, blueTeams) {
@@ -2041,7 +2136,8 @@ window.sortBy = function (column) {
 
 
 
-let teamChartInstance = null;
+let teamChartInstance     = null;
+let dashboardChartInstance = null;
 
 function renderTeamChart(sortedTeams) {
     const ctx = document.getElementById('teamComparisonChart').getContext('2d');
@@ -2645,6 +2741,94 @@ window.sortGlanceBy = function (col) {
     renderAtAGlance();
 };
 
+let dashboardChartCondensed = true;
+let lastDashboardRows       = null;
+
+window.toggleDashboardCondense = function () {
+    dashboardChartCondensed = !dashboardChartCondensed;
+    const btn = document.getElementById('dashboardCondenseBtn');
+    if (btn) btn.textContent = dashboardChartCondensed ? 'Expand' : 'Condense';
+    if (lastDashboardRows) renderDashboardChart(lastDashboardRows);
+};
+
+function renderDashboardChart(rows) {
+    lastDashboardRows = rows;
+    const canvas = document.getElementById('dashboardComparisonChart');
+    if (!canvas) return;
+    if (dashboardChartInstance) { dashboardChartInstance.destroy(); dashboardChartInstance = null; }
+
+    const labels  = rows.map(r => String(r.team.teamNumber));
+    const epas    = rows.map(r => r.epaVal   ?? null);
+    const oprs    = rows.map(r => r.opr      ?? null);
+    const scouts  = rows.map(r => r.scoutEPA ?? null);
+    const hasOPR   = oprs.some(v => v != null);
+    const hasScout = scouts.some(v => v != null);
+
+    const datasets = [
+        { label: 'Statbotics EPA', data: epas,   backgroundColor: '#f59e0baa', borderColor: '#f59e0b', borderWidth: 1 },
+        ...(hasOPR   ? [{ label: 'TBA OPR',   data: oprs,   backgroundColor: '#60a5faaa', borderColor: '#60a5fa', borderWidth: 1 }] : []),
+        ...(hasScout ? [{ label: 'Scout EPA',  data: scouts, backgroundColor: '#4ade80aa', borderColor: '#4ade80', borderWidth: 1 }] : []),
+    ];
+
+    // Per-team column width: condensed aims to fit ~800px; expanded gives comfortable spacing.
+    const perTeam = dashboardChartCondensed
+        ? Math.max(14, Math.floor(800 / Math.max(rows.length, 1)))
+        : 52;
+    const w = Math.max(640, rows.length * perTeam);
+    canvas.width  = w;  canvas.style.width  = w + 'px';
+    canvas.height = 240; canvas.style.height = '240px';
+
+    // Subtle tier-colored background band behind each team's bar group.
+    const TIER_RGBA = { S: 'rgba(245,158,11,0.13)', A: 'rgba(74,222,128,0.10)',
+                        B: 'rgba(168,85,247,0.09)',  C: 'rgba(100,116,139,0.05)' };
+    const tierColors = rows.map(r => TIER_RGBA[r.tier] ?? TIER_RGBA.C);
+
+    const tierBgPlugin = {
+        id: 'dashboardTierBg',
+        beforeDraw(chart) {
+            const { ctx, chartArea, scales } = chart;
+            if (!chartArea) return;
+            const step = scales.x.width / Math.max(labels.length, 1);
+            const half = step / 2;
+            ctx.save();
+            tierColors.forEach((color, i) => {
+                const cx = scales.x.getPixelForValue(i);
+                ctx.fillStyle = color;
+                ctx.fillRect(cx - half, chartArea.top, step, chartArea.bottom - chartArea.top);
+            });
+            ctx.restore();
+        },
+    };
+
+    const condensed = dashboardChartCondensed;
+    dashboardChartInstance = new Chart(canvas.getContext('2d'), {
+        type: 'bar',
+        data: { labels, datasets },
+        plugins: [tierBgPlugin],
+        options: {
+            responsive: false,
+            maintainAspectRatio: false,
+            animation: false,
+            plugins: {
+                legend: { labels: { color: '#94a3b8', font: { size: 11 } } },
+                tooltip: { callbacks: { title: ctx => 'Team ' + ctx[0].label } },
+            },
+            scales: {
+                x: {
+                    ticks: {
+                        color: '#94a3b8',
+                        font: { size: condensed ? 8 : 10 },
+                        maxRotation: condensed ? 90 : 0,
+                        minRotation: condensed ? 90 : 0,
+                    },
+                    grid: { color: '#1e293b' },
+                },
+                y: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { color: '#334155' }, beginAtZero: true },
+            },
+        },
+    });
+}
+
 async function renderAtAGlance() {
     const statusEl = document.getElementById('atAGlanceStatus');
     const table = document.getElementById('atAGlanceTable');
@@ -2858,6 +3042,8 @@ async function renderAtAGlance() {
             ${td(`${scoutStr}${fusedBadge}`)}
         </tr>`;
     }).join('');
+
+    renderDashboardChart(rows);
 
     statusEl.textContent = !hasRP
         ? 'Sync schedule to see records and ranking points.'
@@ -3279,13 +3465,25 @@ window.switchView = function (viewId, btn) {
 };
 
 let currentAnalysisTab = 'statbotics';
+let analysisChartVisible = true;
+
+window.toggleAnalysisChart = function () {
+    analysisChartVisible = !analysisChartVisible;
+    const display = analysisChartVisible ? '' : 'none';
+    const label   = analysisChartVisible ? 'Hide Chart' : 'Show Chart';
+    ['statboticsChartContainer', 'tbaChartContainer', 'scoutingChartContainer', 'dashboardChartContainer']
+        .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = display; });
+    ['analysisChartToggleBtn', 'dashboardChartToggleBtn']
+        .forEach(id => { const el = document.getElementById(id); if (el) el.textContent = label; });
+};
+
 window.switchAnalysisTab = function (tab) {
     currentAnalysisTab = tab;
-    ['statbotics', 'tba', 'scouting'].forEach(t => {
+    ['statbotics', 'tba', 'scouting', 'algorithms'].forEach(t => {
         document.getElementById(`analysis-tab-${t}`).style.display = t === tab ? 'block' : 'none';
     });
     document.querySelectorAll('#analysisTabs .detail-tab-btn').forEach((btn, i) => {
-        btn.classList.toggle('active', ['statbotics', 'tba', 'scouting'][i] === tab);
+        btn.classList.toggle('active', ['statbotics', 'tba', 'scouting', 'algorithms'][i] === tab);
     });
     if (tab === 'scouting') {
         displayScoutingTeams();   // immediate render from cache or raw scouting
@@ -3559,7 +3757,7 @@ window.displayScoutingTeams = async function () {
         return `<tr style="${rowStyle}" onclick="viewTeamDetail(${r.teamNumber}, 'scouting')">
             ${tierCell}
             <td style="white-space:nowrap;"><strong>${r.teamNumber}</strong>${ownStar(r.teamNumber)}</td>
-            <td style="${gradBg(r.total,'total')}"><strong>${r.total.toFixed(1)}</strong>${fusedDot}</td>
+            <td style="${gradBg(r.total,'total')}white-space:nowrap;"><strong>${r.total.toFixed(1)}</strong>${fusedDot}</td>
             <td style="${gradBg(r.auto,'auto')}color:#f59e0b;">${r.auto.toFixed(1)}</td>
             <td style="${gradBg(r.teleop,'teleop')}color:#3b82f6;">${r.teleop.toFixed(1)}</td>
             <td style="${gradBg(r.endgame,'endgame')}color:#10b981;">${r.endgame.toFixed(1)}</td>
@@ -3952,6 +4150,16 @@ async function renderCurationTab() {
                 }
             }
 
+            // Per-match index of scouted team numbers (for finding unscouted alliance partners)
+            const matchScoutedTeams = {};
+            for (const obs of observations) {
+                const tn = String(obs.teamNumber);
+                if (!tn || tn === '0') continue;
+                if (!matchScoutedTeams[obs.matchNumber]) matchScoutedTeams[obs.matchNumber] = new Set();
+                matchScoutedTeams[obs.matchNumber].add(tn);
+            }
+            const matchIndex = Object.fromEntries(tbaMatches.map(m => [m.matchNumber, m]));
+
             const unknownEntries = Object.entries(unknownMap)
                 .sort(([a], [b]) => Number(a) - Number(b));
 
@@ -3972,14 +4180,32 @@ async function renderCurationTab() {
                             <th style="text-align:left;padding:4px 8px;">Scouted #</th>
                             <th style="text-align:right;padding:4px 8px;">Rows</th>
                             <th style="text-align:left;padding:4px 8px;">Matches</th>
+                            <th style="text-align:left;padding:4px 8px;">Unscouted in those matches</th>
                         </tr></thead>
                         <tbody>
                         ${unknownEntries.map(([tn, mnSet]) => {
-                            const matches = [...mnSet].sort((a, b) => a - b).map(mn => `QM ${mn}`).join(', ');
+                            const sortedMns = [...mnSet].sort((a, b) => a - b);
+                            const matches = sortedMns.map(mn => `QM ${mn}`).join(', ');
+
+                            // Teams in those TBA matches that have no scouting row
+                            const unscouted = new Set();
+                            for (const mn of sortedMns) {
+                                const tbaMatch = matchIndex[mn];
+                                if (!tbaMatch) continue;
+                                const scouted = matchScoutedTeams[mn] || new Set();
+                                for (const t of [...(tbaMatch.red || []), ...(tbaMatch.blue || [])]) {
+                                    if (!scouted.has(t)) unscouted.add(t);
+                                }
+                            }
+                            const unscoutedStr = unscouted.size > 0
+                                ? [...unscouted].sort((a, b) => Number(a) - Number(b)).join(', ')
+                                : '<span style="color:#475569;">—</span>';
+
                             return `<tr style="border-bottom:1px solid #1e293b;">
                                 <td style="padding:4px 8px;color:#f87171;font-weight:600;">${tn}</td>
                                 <td style="text-align:right;padding:4px 8px;color:#94a3b8;">${mnSet.size}</td>
                                 <td style="padding:4px 8px;color:#94a3b8;">${matches}</td>
+                                <td style="padding:4px 8px;color:#fbbf24;font-weight:600;">${unscoutedStr}</td>
                             </tr>`;
                         }).join('')}
                         </tbody>
@@ -5088,9 +5314,37 @@ async function renderScoutingTab(teamNumber) {
         html += `<div style="background:#1e1a0a;border:1px solid #854d0e;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:0.78em;color:#ca8a04;">Run "Sync TBA Matches" to enable TBA-fused estimates. Showing scouting data only.</div>`;
     }
 
+    // Build event-wide breakdown pool so renderScoutingDetail can rank tiers relatively.
+    let allScoutBreakdowns = [];
+    if (config.computeEPABreakdown || config.computeFusedEPABreakdown) {
+        const eventFusedCache = (() => { try { return JSON.parse(localStorage.getItem(`scoutingFusedStats_${eventKey}`)); } catch { return null; } })();
+        for (const [tn, rawRows] of Object.entries(byTeam)) {
+            const { rows: deduped } = deduplicateTeamRows(rawRows);
+            const agg = config.aggregateTeam(deduped);
+            const fusedResult = eventFusedCache?.teams?.[tn];
+            const hasFused = !!(fusedResult?.available && config.computeFusedEPABreakdown);
+            const bd = hasFused
+                ? config.computeFusedEPABreakdown(fusedResult.stats)
+                : (config.computeEPABreakdown?.(agg) ?? {});
+            allScoutBreakdowns.push({
+                teamNumber: tn,
+                ...bd,
+                teleFuelFused:  hasFused ? (fusedResult.stats.teleFuelFused  ?? null) : null,
+                avgScoringEff: agg.avgScoringEff ?? null,
+            });
+        }
+    }
+
+    const rankTier = (vals, myVal) => {
+        const sorted = vals.filter(v => v != null && !isNaN(v)).sort((a, b) => b - a);
+        const rank = sorted.findIndex(v => v <= myVal + 0.001);
+        const r = rank < 0 ? sorted.length : rank;
+        return r < 8 ? 'S' : r < 20 ? 'A' : r < 32 ? 'B' : 'C';
+    };
+
     // Stat groups — game-specific rich detail or generic displayFields grid
     if (config.renderScoutingDetail) {
-        html += config.renderScoutingDetail({ rawStats, fusedStats, getValue, isFused, teamRows, fusedByMatch, fused });
+        html += config.renderScoutingDetail({ rawStats, fusedStats, getValue, isFused, teamRows, fusedByMatch, fused, allScoutBreakdowns, rankTier });
     } else {
         const GROUP_COLORS = {
             'Overview':              { accent: '#64748b', bg: 'rgba(100,116,139,0.07)' },
@@ -5168,49 +5422,58 @@ async function renderScoutingTab(teamNumber) {
 
         const _cols = config?.matchBreakdownColumns ?? [];
 
+        // Fused view shows: Auto Fuel | Tele Fuel | Endgame Fuel | Total Fuel.
+        // Raw view shows the full _cols set + Endgame position column.
+        const fusedFuelCols = [
+            ..._cols.filter(c => c.label === 'Auto Fuel' || c.label === 'Tele Fuel'),
+            { label: 'Endgame Fuel', fused: f => f.endgameFuelFused ?? null, raw: r => null },
+        ];
+
         const buildMatchRow = (matchNumber, row, mode) => {
             const dupBadge = duplicated.has(matchNumber)
                 ? `<span style="color:#ef4444;font-size:0.75em;font-weight:700;margin-left:4px;">2x</span>`
                 : '';
             if (!row) {
+                const span = mode === 'fused' ? fusedFuelCols.length + 1 : _cols.length + 1;
                 return `<tr style="border-bottom:1px solid #1e293b;opacity:0.45;">
                     <td style="text-align:left;padding:4px 8px;color:#60a5fa;">QM ${matchNumber}</td>
-                    <td colspan="${_cols.length + 1}" style="padding:4px 8px;color:#475569;font-style:italic;">No scouting data</td>
+                    <td colspan="${span}" style="padding:4px 8px;color:#475569;font-style:italic;">No scouting data</td>
                 </tr>`;
             }
             if (mode === 'fused') {
                 const f = fusedByMatch[matchNumber];
+                const fmt = v => v != null && v > 0 ? v.toFixed(1).replace(/\.0$/, '') : '—';
                 if (!f) {
                     return `<tr style="border-bottom:1px solid #1e293b;opacity:0.5;">
                         <td style="text-align:left;padding:4px 8px;color:#60a5fa;">QM ${matchNumber}${dupBadge}</td>
-                        ${_cols.map(c => { const v = c.raw(row); return `<td style="text-align:right;padding:4px 6px;font-style:italic;">${v > 0 ? v.toFixed(1).replace(/\.0$/, '') : '—'}</td>`; }).join('')}
+                        ${fusedFuelCols.map(c => { const v = c.raw(row); return `<td style="text-align:right;padding:4px 6px;font-style:italic;">${typeof v === 'number' && v > 0 ? v.toFixed(1).replace(/\.0$/, '') : (v || '—')}</td>`; }).join('')}
                         <td style="text-align:right;padding:4px 6px;color:#475569;font-style:italic;">no TBA</td>
                     </tr>`;
                 }
-                const fmt = v => v != null && v > 0 ? v.toFixed(1).replace(/\.0$/, '') : '—';
-                const endPts = f.endgamePts ?? null;
+                const totalFuel = (f.autoFuelFused ?? 0) + (f.teleFuelFused ?? 0) + (f.endgameFuelFused ?? 0);
                 return `<tr style="border-bottom:1px solid #1e293b;">
                     <td style="text-align:left;padding:4px 8px;color:#60a5fa;">QM ${matchNumber}${dupBadge}</td>
-                    ${_cols.map(c => `<td style="text-align:right;padding:4px 6px;color:#4ade80;">${fmt(c.fused(f))}</td>`).join('')}
-                    <td style="text-align:right;padding:4px 6px;color:#4ade80;">${endPts != null ? endPts.toFixed(1).replace(/\.0$/, '') : '—'}</td>
+                    ${fusedFuelCols.map(c => `<td style="text-align:right;padding:4px 6px;color:#4ade80;">${fmt(c.fused(f))}</td>`).join('')}
+                    <td style="text-align:right;padding:4px 6px;color:#4ade80;font-weight:700;">${fmt(totalFuel)}</td>
                 </tr>`;
             }
             // raw mode
             return `<tr style="border-bottom:1px solid #1e293b;">
                 <td style="text-align:left;padding:4px 8px;color:#60a5fa;">QM ${matchNumber}${dupBadge}</td>
-                ${_cols.map(c => { const v = c.raw(row); return `<td style="text-align:right;padding:4px 6px;">${v > 0 ? v.toFixed(1).replace(/\.0$/, '') : '—'}</td>`; }).join('')}
+                ${_cols.map(c => { const v = c.raw(row); return `<td style="text-align:right;padding:4px 6px;">${typeof v === 'number' && v > 0 ? v.toFixed(1).replace(/\.0$/, '') : (v || '—')}</td>`; }).join('')}
                 <td style="text-align:right;padding:4px 6px;color:#94a3b8;">${row.endPosition || '—'}</td>
             </tr>`;
         };
 
         const tableHtml = (mode) => {
-            const endHeader = mode === 'fused' ? 'End (pts)' : 'End';
+            const headers = mode === 'fused'
+                ? [...fusedFuelCols.map(c => c.label), 'Total Fuel']
+                : [..._cols.map(c => c.label), 'End'];
             return `
             <table style="width:100%;border-collapse:collapse;font-size:0.78em;">
                 <thead><tr style="color:#64748b;border-bottom:1px solid #334155;">
                     <th style="text-align:left;padding:4px 8px;">Match</th>
-                    ${_cols.map(c => `<th style="text-align:right;padding:4px 6px;">${c.label}</th>`).join('')}
-                    <th style="text-align:right;padding:4px 6px;">${endHeader}</th>
+                    ${headers.map(h => `<th style="text-align:right;padding:4px 6px;">${h}</th>`).join('')}
                 </tr></thead>
                 <tbody>
                 ${allEntries.map(({ matchNumber, row }) => buildMatchRow(matchNumber, row, mode)).join('')}
@@ -5220,12 +5483,12 @@ async function renderScoutingTab(teamNumber) {
 
         const toggleHtml = hasFusedMatches ? `
             <div style="display:flex;gap:0;border:1px solid #334155;border-radius:5px;overflow:hidden;">
-                <button id="scoutMatchToggleRaw"
-                    onclick="document.getElementById('scoutMatchTableRaw').style.display='';document.getElementById('scoutMatchTableFused').style.display='none';document.getElementById('scoutMatchToggleRaw').style.cssText+='background:#1e293b;color:#f8fafc;';document.getElementById('scoutMatchToggleFused').style.cssText+='background:transparent;color:#64748b;';"
-                    style="background:#1e293b;color:#f8fafc;border:none;padding:4px 12px;font-size:0.72em;cursor:pointer;font-weight:600;">Raw</button>
                 <button id="scoutMatchToggleFused"
                     onclick="document.getElementById('scoutMatchTableFused').style.display='';document.getElementById('scoutMatchTableRaw').style.display='none';document.getElementById('scoutMatchToggleFused').style.cssText+='background:#1e293b;color:#4ade80;';document.getElementById('scoutMatchToggleRaw').style.cssText+='background:transparent;color:#64748b;';"
-                    style="background:transparent;color:#64748b;border:none;padding:4px 12px;font-size:0.72em;cursor:pointer;font-weight:600;">Fused</button>
+                    style="background:#1e293b;color:#4ade80;border:none;padding:4px 12px;font-size:0.72em;cursor:pointer;font-weight:600;">Fused</button>
+                <button id="scoutMatchToggleRaw"
+                    onclick="document.getElementById('scoutMatchTableRaw').style.display='';document.getElementById('scoutMatchTableFused').style.display='none';document.getElementById('scoutMatchToggleRaw').style.cssText+='background:#1e293b;color:#f8fafc;';document.getElementById('scoutMatchToggleFused').style.cssText+='background:transparent;color:#64748b;';"
+                    style="background:transparent;color:#64748b;border:none;padding:4px 12px;font-size:0.72em;cursor:pointer;font-weight:600;">Raw</button>
             </div>` : '';
 
         html += `
@@ -5235,8 +5498,8 @@ async function renderScoutingTab(teamNumber) {
                 ${toggleHtml}
             </div>
             <div style="overflow-x:auto;">
-                <div id="scoutMatchTableRaw">${tableHtml('raw')}</div>
-                ${hasFusedMatches ? `<div id="scoutMatchTableFused" style="display:none;">${tableHtml('fused')}</div>` : ''}
+                <div id="scoutMatchTableRaw" ${hasFusedMatches ? 'style="display:none;"' : ''}>${tableHtml('raw')}</div>
+                ${hasFusedMatches ? `<div id="scoutMatchTableFused">${tableHtml('fused')}</div>` : ''}
             </div>
         </div>`;
     }
