@@ -466,6 +466,7 @@ window.openScoutingBreakdown = async function () {
     const modal   = document.getElementById('scoutingBreakdownModal');
     const content = document.getElementById('scoutingBreakdownContent');
     modal.style.display = 'block';
+    pushNavState('scoutingBreakdown');
     content.innerHTML = '<p style="color:#64748b;text-align:center;margin-top:40px;">Loading…</p>';
 
     const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
@@ -519,10 +520,11 @@ window.openScoutingBreakdown = async function () {
     // ── Radar chart ───────────────────────────────────────────────────────────
     // Fuse each team to get autoFuelFused, then combine with autoClimbPts for auto EPA.
     const allByMatch = indexObservationsByMatch(processed.observations);
+    const teamEPABreakdown = {};
     const teamAutoEPA = {};
     for (const tn of allTeams) {
         const agg  = teamStats[tn];
-        if (!agg) { teamAutoEPA[tn] = 0; continue; }
+        if (!agg) { teamAutoEPA[tn] = 0; teamEPABreakdown[tn] = { total: 0 }; continue; }
         const rows = byTeam[String(tn)];
         const { rows: deduped } = deduplicateTeamRows(rows);
         const fused = hasTBABreakdowns
@@ -530,8 +532,12 @@ window.openScoutingBreakdown = async function () {
             : { available: false };
         const fs = fused.available ? fused.stats : {};
         const merged = { ...agg, ...fs };
-        teamAutoEPA[tn] = config.computeFusedEPABreakdown?.(merged)?.auto ?? (agg.autoClimbPts ?? 0);
+        const bd = config.computeFusedEPABreakdown?.(merged) ?? { auto: agg.autoClimbPts ?? 0, total: 0 };
+        teamAutoEPA[tn] = bd.auto;
+        teamEPABreakdown[tn] = bd;
     }
+    const redPred  = redTeams.reduce((s, tn)  => s + (teamEPABreakdown[tn]?.total ?? 0), 0);
+    const bluePred = blueTeams.reduce((s, tn) => s + (teamEPABreakdown[tn]?.total ?? 0), 0);
     const maxAutoEPA = Math.max(...Object.values(teamAutoEPA), 1);
 
     const radarAxes = [
@@ -587,14 +593,25 @@ window.openScoutingBreakdown = async function () {
     tableHtml += `</tbody></table></div>`;
 
     content.innerHTML = `
-        <div style="display:flex;gap:12px;margin-bottom:20px;">
-            <div style="flex:1;text-align:center;">
-                <div style="font-size:0.75em;font-weight:700;color:#fca5a5;letter-spacing:0.06em;margin-bottom:6px;">RED ALLIANCE</div>
-                <canvas id="breakdownRadarRed"  width="370" height="310"></canvas>
+        <div style="display:flex;justify-content:center;gap:32px;margin-bottom:16px;font-weight:700;">
+            <div style="text-align:center;">
+                <div style="font-size:0.7em;font-weight:700;color:#fca5a5;letter-spacing:0.06em;margin-bottom:2px;">RED PREDICTED</div>
+                <div style="font-size:1.6em;color:#f87171;">${Math.round(redPred)}</div>
             </div>
-            <div style="flex:1;text-align:center;">
+            <div style="align-self:center;color:#475569;font-size:0.9em;">vs</div>
+            <div style="text-align:center;">
+                <div style="font-size:0.7em;font-weight:700;color:#93c5fd;letter-spacing:0.06em;margin-bottom:2px;">BLUE PREDICTED</div>
+                <div style="font-size:1.6em;color:#60a5fa;">${Math.round(bluePred)}</div>
+            </div>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:20px;">
+            <div style="flex:1;min-width:260px;text-align:center;">
+                <div style="font-size:0.75em;font-weight:700;color:#fca5a5;letter-spacing:0.06em;margin-bottom:6px;">RED ALLIANCE</div>
+                <canvas id="breakdownRadarRed"></canvas>
+            </div>
+            <div style="flex:1;min-width:260px;text-align:center;">
                 <div style="font-size:0.75em;font-weight:700;color:#93c5fd;letter-spacing:0.06em;margin-bottom:6px;">BLUE ALLIANCE</div>
-                <canvas id="breakdownRadarBlue" width="370" height="310"></canvas>
+                <canvas id="breakdownRadarBlue"></canvas>
             </div>
         </div>
         ${tableHtml}
@@ -605,14 +622,21 @@ window.openScoutingBreakdown = async function () {
     if (breakdownRadarChartBlue) { breakdownRadarChartBlue.destroy(); breakdownRadarChartBlue = null; }
 
     const radarOptions = {
-        responsive: false,
+        responsive: true,
+        aspectRatio: 1,
+        layout: { padding: 0 },
         scales: {
             r: {
                 min: 0, max: 100,
                 ticks: { stepSize: 25, color: '#475569', backdropColor: 'transparent', font: { size: 10 } },
                 grid:        { color: '#1e293b' },
                 angleLines:  { color: '#334155' },
-                pointLabels: { color: '#94a3b8', font: { size: 11 } },
+                pointLabels: {
+                    color: '#94a3b8',
+                    font: { size: 10 },
+                    padding: 4,
+                    callback: label => label.includes(' ') ? label.split(' ') : label,
+                },
             },
         },
         plugins: {
@@ -3381,7 +3405,9 @@ function pushNavState(overlay) {
 
 // Native back gesture/button: close the topmost visible overlay
 window.addEventListener('popstate', () => {
-    if (document.getElementById('photoLightbox').style.display !== 'none') {
+    if (document.getElementById('scoutingBreakdownModal').style.display !== 'none') {
+        window.closeScoutingBreakdown();
+    } else if (document.getElementById('photoLightbox').style.display !== 'none') {
         window.closeLightbox();
     } else if (document.getElementById('matchDetailView').style.display !== 'none') {
         window.closeMatchDetail();
@@ -4242,11 +4268,11 @@ window.sortPickListBy = function (col) {
 
 window.switchToolsTab = function (tab) {
     currentToolsTab = tab;
-    ['picklist', 'draft'].forEach(t => {
+    ['picklist', 'draft', 'field'].forEach(t => {
         document.getElementById(`tools-tab-${t}`).style.display = t === tab ? 'block' : 'none';
     });
     document.querySelectorAll('#toolsTabs .detail-tab-btn').forEach((btn, i) => {
-        btn.classList.toggle('active', ['picklist', 'draft'][i] === tab);
+        btn.classList.toggle('active', ['picklist', 'draft', 'field'][i] === tab);
     });
     if (tab === 'picklist') renderPickList();
     if (tab === 'draft') renderDraft();
