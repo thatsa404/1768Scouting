@@ -913,6 +913,12 @@
         body.mobile-ui .prep-stats-grid { font-size: 0.9em; }
         body.mobile-ui .prep-team-number { font-size: 2rem !important; }
         #chartContainer { position: relative; }
+        #fieldWrapper:fullscreen, .field-faux-fs { display:flex !important; flex-direction:column !important; background:#0f172a !important; border-radius:0 !important; overflow:hidden !important; }
+        .field-faux-fs { position:fixed !important; inset:0 !important; z-index:1000 !important; }
+        #fieldWrapper:fullscreen #fieldToolbar, .field-faux-fs #fieldToolbar { flex-shrink:0 !important; }
+        #fieldWrapper:fullscreen #fieldImageWrap, .field-faux-fs #fieldImageWrap { flex:1 !important; min-height:0 !important; width:100% !important; max-width:100% !important; line-height:0 !important; display:flex !important; align-items:center !important; justify-content:center !important; }
+        #fieldWrapper:fullscreen #fieldBgImg, .field-faux-fs #fieldBgImg { width:auto !important; max-width:100% !important; max-height:100% !important; display:block !important; }
+        #fieldWrapper:fullscreen #fieldDrawCanvas, .field-faux-fs #fieldDrawCanvas { position:absolute !important; inset:0 !important; width:100% !important; height:100% !important; }
         .perf-chart-wrap { position: relative; height: 260px; }
         body.mobile-ui .perf-chart-wrap { height: 300px; }
 
@@ -1019,7 +1025,7 @@
     </script>
 
     <div class="site-header">
-        <img src="logo.png" alt="Team 1768 Logo">
+        <img src="header.png" alt="Team 1768 Logo">
         <h1>Nashoba Robotics<span class="subtitle" id="headerSubtitle">Event Hub</span></h1>
         <div class="ui-mode-switcher">
             <button id="desktopModeBtn" class="ui-mode-btn active" onclick="setUIMode('desktop')" title="Desktop view">
@@ -1728,29 +1734,32 @@
         <div id="tab-epa-opr" class="detail-tab-content" style="display:none;">
             <div id="detailStats" style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:20px; margin-top:16px;">
             </div>
-            <div style="background:#222; padding:20px; margin-top:20px; border-radius:8px; border:1px solid #444;">
-                <h3 style="margin-top:0;">Exponential Fit Analysis</h3>
-                <div style="display:flex; gap:20px; align-items:center; flex-wrap:wrap;">
-                    <div>
-                        <label>Start Match:</label>
-                        <input type="number" id="mathStart" value="1" min="1" style="width:60px;">
-                    </div>
-                    <div>
-                        <label>End Match:</label>
-                        <input type="number" id="mathEnd" value="100" min="2" style="width:60px;">
-                    </div>
-                    <button id="runAnalysisBtn" onclick="runManualAnalysis()" style="background:#10b981;">Calculate
-                        Ceiling</button>
-                </div>
-                <div id="analysisFeedback" style="margin-top:10px; color:#aaa; font-size:0.9em;">Select a range and
-                    click calculate.</div>
-            </div>
             <div id="chartContainer" style="margin-top:16px; background:#222; padding:20px; border-radius:8px;">
                 <h3 style="margin:0 0 12px;">Performance Trajectory</h3>
                 <div class="perf-chart-wrap">
                     <canvas id="performanceChart"></canvas>
                 </div>
             </div>
+            <details style="margin-top:16px;">
+                <summary style="background:#222; padding:16px 20px; border-radius:8px; border:1px solid #444; cursor:pointer; list-style:none; display:flex; align-items:center; justify-content:space-between; user-select:none;">
+                    <h3 style="margin:0; font-size:1em;">Ceiling Analysis</h3>
+                    <span style="color:#64748b; font-size:0.8em;">▸ expand</span>
+                </summary>
+                <div style="background:#222; padding:20px; border:1px solid #444; border-top:none; border-radius:0 0 8px 8px;">
+                    <div style="display:flex; gap:20px; align-items:center; flex-wrap:wrap;">
+                        <div>
+                            <label>Start Match:</label>
+                            <input type="number" id="mathStart" value="1" min="1" style="width:60px;">
+                        </div>
+                        <div>
+                            <label>End Match:</label>
+                            <input type="number" id="mathEnd" value="100" min="2" style="width:60px;">
+                        </div>
+                        <button id="runAnalysisBtn" onclick="runManualAnalysis()" style="background:#10b981;">Calculate Ceiling</button>
+                    </div>
+                    <div id="analysisFeedback" style="margin-top:10px; color:#aaa; font-size:0.9em;">Select a range and click calculate.</div>
+                </div>
+            </details>
 
             <div style="margin-top:24px; background:#222; padding:20px; border-radius:8px; border:1px solid #444;">
                 <h3 style="margin-top:0;">TBA OPR Profile</h3>

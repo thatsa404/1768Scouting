@@ -4049,15 +4049,21 @@ async function renderCurationTab() {
 
     // ── 4. OUTLIER MATCHES ──────────────────────────────────────────────────
     {
-        const computeMatchEPA = config.computeMatchEPA
-            ? (row) => config.computeMatchEPA(row)
-            : () => 0;
+        const fusedCache = (() => { try { return JSON.parse(localStorage.getItem(`scoutingFusedStats_${eventKey}`)); } catch { return null; } })();
+
+        const getMatchEPA = (tn, row) => {
+            const matchFused = fusedCache?.teams?.[tn]?.fusedByMatch?.[String(row.matchNumber)];
+            if (matchFused && config.computeFusedEPABreakdown) {
+                return config.computeFusedEPABreakdown(matchFused).total;
+            }
+            return config.computeMatchEPA ? config.computeMatchEPA(row) : 0;
+        };
 
         const outliers = [];
         for (const [tn, rows] of Object.entries(dedupedByTeam)) {
             const played = rows.filter(r => !r.noShow);
             if (played.length < 2) continue;
-            const epas = played.map(r => ({ r, epa: computeMatchEPA(r) }));
+            const epas = played.map(r => ({ r, epa: getMatchEPA(tn, r) }));
             const mean = epas.reduce((s, x) => s + x.epa, 0) / epas.length;
             const std  = Math.sqrt(epas.reduce((s, x) => s + (x.epa - mean) ** 2, 0) / epas.length);
             for (const { r, epa } of epas) {
@@ -4090,11 +4096,11 @@ async function renderCurationTab() {
                     const dir = o.z > 0 ? '+' : '';
                     const c   = o.z > 0 ? '#4ade80' : '#ef4444';
                     return `<tr style="border-bottom:1px solid #1e293b;cursor:pointer;" onclick="viewTeamDetail(${o.tn}, 'scouting')">
-                        <td style="padding:4px 8px;color:#f8fafc;font-weight:600;">${o.tn}</td>
-                        <td style="padding:4px 8px;color:#60a5fa;">QM ${o.mn}</td>
-                        <td style="text-align:right;padding:4px 8px;">${o.epa.toFixed(1)}</td>
-                        <td style="text-align:right;padding:4px 8px;color:#64748b;">${o.mean.toFixed(1)}</td>
-                        <td style="text-align:right;padding:4px 8px;color:${c};">${dir}${o.z.toFixed(2)}σ</td>
+                        <td style="padding:4px 8px;color:#f8fafc;font-weight:600;white-space:nowrap;">${o.tn}</td>
+                        <td style="padding:4px 8px;color:#60a5fa;white-space:nowrap;">QM ${o.mn}</td>
+                        <td style="text-align:right;padding:4px 8px;white-space:nowrap;">${o.epa.toFixed(1)}</td>
+                        <td style="text-align:right;padding:4px 8px;color:#64748b;white-space:nowrap;">${o.mean.toFixed(1)}</td>
+                        <td style="text-align:right;padding:4px 8px;white-space:nowrap;color:${c};">${dir}${o.z.toFixed(2)}σ</td>
                     </tr>`;
                 }).join('')}
                 </tbody>
@@ -4276,7 +4282,221 @@ window.switchToolsTab = function (tab) {
     });
     if (tab === 'picklist') renderPickList();
     if (tab === 'draft') renderDraft();
+    if (tab === 'field') initFieldTab();
 };
+
+// ── Field Drawing Tab ────────────────────────────────────────────────────────
+// Strokes: { pts: [{x,y}…] normalized to IMAGE rect (0–1), color }
+//
+// Key design: _fPt() reads img.getBoundingClientRect() live on every touch/mouse
+// event. The canvas fills the wrapper via CSS (inset:0 100%/100%) and its buffer
+// is sized to the image rendered dimensions. Coordinate mapping is always fresh —
+// no timing-sensitive JS positioning that can fail mid-fullscreen-transition.
+
+let fieldStrokes       = [];
+let fieldDrawing       = false;
+let fieldCurrentStroke = [];
+let fieldCanvas        = null;
+let fieldCtx           = null;
+let fieldActiveYear    = null;
+let fieldDrawMode      = false;
+let fieldColor         = '#f8fafc'; // white default
+
+// Match prep radar palette (R1-R3 red shades, B1-B3 blue shades) + white
+const _FC = [
+    { id:'fcR1', color:'#ef4444', label:'R1' },
+    { id:'fcR2', color:'#f87171', label:'R2' },
+    { id:'fcR3', color:'#fca5a5', label:'R3' },
+    { id:'fcB1', color:'#3b82f6', label:'B1' },
+    { id:'fcB2', color:'#60a5fa', label:'B2' },
+    { id:'fcB3', color:'#93c5fd', label:'B3' },
+    { id:'fcW',  color:'#f8fafc', label:'W'  },
+];
+
+function initFieldTab() {
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase() || '';
+    const year = eventKey.match(/^(\d{4})/)?.[1] || '2026';
+    const container = document.getElementById('tools-tab-field');
+
+    if (year !== fieldActiveYear) {
+        fieldStrokes = [];
+        fieldActiveYear = year;
+    }
+
+    const bs = `background:#1e293b;border:1px solid #334155;padding:6px 12px;border-radius:5px;cursor:pointer;font-size:0.82em;font-weight:600;color:`;
+    const colorDots = _FC.map(c =>
+        `<button id="${c.id}" onclick="fieldSetColor('${c.color}')" title="${c.label}"
+            style="width:22px;height:22px;border-radius:4px;background:${c.color};border:2px solid ${c.color===fieldColor?'#fff':'transparent'};cursor:pointer;padding:0;flex-shrink:0;"></button>`
+    ).join('');
+
+    container.innerHTML = `
+        <div id="fieldWrapper" style="border-radius:8px;overflow:hidden;">
+            <div id="fieldToolbar" style="display:flex;gap:8px;align-items:center;padding:10px;flex-wrap:wrap;background:#0f172a;">
+                <button id="fieldDrawToggle" onclick="fieldToggleDraw()" style="${bs}#94a3b8;">Draw</button>
+                <button onclick="fieldUndo()"       style="${bs}#f8fafc;">Undo</button>
+                <button onclick="fieldErase()"      style="${bs}#ef4444;">Erase All</button>
+                <button onclick="fieldFullscreen()" style="${bs}#94a3b8;">⛶ Fullscreen</button>
+                <div style="display:flex;gap:4px;align-items:center;margin-left:4px;">
+                    <span style="color:#475569;font-size:0.72em;white-space:nowrap;">Color:</span>
+                    ${colorDots}
+                </div>
+            </div>
+            <div id="fieldImageWrap" style="position:relative;width:100%;max-width:960px;line-height:0;">
+                <img id="fieldBgImg" src="${import.meta.env.BASE_URL}field/${year}-field.png"
+                    style="display:block;width:100%;user-select:none;pointer-events:none;" draggable="false">
+                <canvas id="fieldDrawCanvas"
+                    style="position:absolute;inset:0;width:100%;height:100%;touch-action:none;"></canvas>
+            </div>
+        </div>`;
+
+    fieldCanvas = document.getElementById('fieldDrawCanvas');
+    fieldCtx    = fieldCanvas.getContext('2d');
+    fieldDrawing = false;
+    fieldCurrentStroke = [];
+    _fUpdateToggle();
+
+    const img = document.getElementById('fieldBgImg');
+    const doSize = () => _fSizeCanvas(img);
+    if (img.complete && img.naturalWidth) doSize();
+    else img.addEventListener('load', doSize);
+
+    // Bind to the wrapper so touch hits regardless of canvas buffer state.
+    // touchstart/touchmove need passive:false to call preventDefault (blocks scroll).
+    const wrap = document.getElementById('fieldImageWrap');
+    wrap.addEventListener('mousedown',   _fDown);
+    wrap.addEventListener('mousemove',   _fMove);
+    wrap.addEventListener('mouseup',     _fUp);
+    wrap.addEventListener('mouseleave',  _fUp);
+    wrap.addEventListener('touchstart',  _fTouchStart, { passive: false });
+    wrap.addEventListener('touchmove',   _fTouchMove,  { passive: false });
+    wrap.addEventListener('touchend',    _fUp);
+    wrap.addEventListener('touchcancel', _fUp);
+}
+
+// Resize the canvas drawing buffer to match the image's rendered dimensions.
+// The canvas CSS (inset:0 / 100%×100%) already fills the wrapper — only the
+// buffer needs updating so stroke line-width stays proportional.
+function _fSizeCanvas(img) {
+    img = img || document.getElementById('fieldBgImg');
+    if (!fieldCanvas || !img) return;
+    const r = img.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return;
+    fieldCanvas.width  = Math.round(r.width);
+    fieldCanvas.height = Math.round(r.height);
+    fieldRedraw();
+}
+
+// Resize after fullscreen transitions — retry a few times for Android layout settling.
+document.addEventListener('fullscreenchange', () => {
+    if (!fieldCanvas) return;
+    [60, 200, 450].forEach(ms => setTimeout(() => _fSizeCanvas(), ms));
+});
+
+function _fUpdateToggle() {
+    const btn = document.getElementById('fieldDrawToggle');
+    if (!btn) return;
+    if (fieldDrawMode) {
+        btn.textContent = 'Drawing';
+        btn.style.background  = '#166534';
+        btn.style.color       = '#4ade80';
+        btn.style.borderColor = '#166534';
+    } else {
+        btn.textContent = 'Draw';
+        btn.style.background  = '#1e293b';
+        btn.style.color       = '#94a3b8';
+        btn.style.borderColor = '#334155';
+    }
+}
+
+window.fieldToggleDraw = () => { fieldDrawMode = !fieldDrawMode; _fUpdateToggle(); };
+
+window.fieldSetColor = (color) => {
+    fieldColor = color;
+    _FC.forEach(({ id, color: c }) => {
+        const btn = document.getElementById(id);
+        if (btn) btn.style.borderColor = c === color ? '#fff' : 'transparent';
+    });
+};
+
+window.fieldFullscreen = () => {
+    const el = document.getElementById('fieldWrapper');
+    if (!el) return;
+
+    if (document.fullscreenElement) { document.exitFullscreen(); return; }
+
+    const isFaux = el.classList.contains('field-faux-fs');
+    if (isFaux) {
+        el.classList.remove('field-faux-fs');
+        document.body.style.overflow = '';
+        [60, 200].forEach(ms => setTimeout(() => _fSizeCanvas(), ms));
+        return;
+    }
+
+    // iOS Safari does not support requestFullscreen on arbitrary elements —
+    // use a CSS fixed-overlay as a universal fallback.
+    const tryFaux = () => {
+        el.classList.add('field-faux-fs');
+        document.body.style.overflow = 'hidden';
+        [60, 200, 450].forEach(ms => setTimeout(() => _fSizeCanvas(), ms));
+    };
+    if (el.requestFullscreen) el.requestFullscreen().catch(tryFaux);
+    else tryFaux();
+};
+
+// _fPt reads the IMAGE's live bounding rect for coordinates, not the canvas.
+// This is the key fix: accurate at call time regardless of canvas CSS state or
+// any fullscreen transition timing.
+function _fPt(e) {
+    const img = document.getElementById('fieldBgImg');
+    const r = img ? img.getBoundingClientRect() : fieldCanvas.getBoundingClientRect();
+    return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+}
+
+function _fDown(e)       { if (!fieldDrawMode) return; fieldDrawing = true; fieldCurrentStroke = [_fPt(e)]; }
+function _fMove(e)       { if (!fieldDrawing) return; fieldCurrentStroke.push(_fPt(e)); _fDrawLive(); }
+function _fUp()          { if (!fieldDrawing) return; fieldDrawing = false; if (fieldCurrentStroke.length) { fieldStrokes.push({ pts: [...fieldCurrentStroke], color: fieldColor }); fieldCurrentStroke = []; fieldRedraw(); } }
+function _fTouchStart(e) { e.preventDefault(); if (!fieldDrawMode) return; fieldDrawing = true; fieldCurrentStroke = [_fPt(e.touches[0])]; }
+function _fTouchMove(e)  { e.preventDefault(); if (!fieldDrawing) return; fieldCurrentStroke.push(_fPt(e.touches[0])); _fDrawLive(); }
+
+function _fStroke(ctx, stroke) {
+    const { pts, color } = stroke;
+    const W = fieldCanvas.width, H = fieldCanvas.height;
+    if (!pts.length) return;
+    ctx.strokeStyle = color;
+    ctx.fillStyle   = color;
+    ctx.beginPath();
+    if (pts.length === 1) { ctx.arc(pts[0].x * W, pts[0].y * H, 2, 0, Math.PI * 2); ctx.fill(); return; }
+    ctx.moveTo(pts[0].x * W, pts[0].y * H);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x * W, pts[i].y * H);
+    ctx.stroke();
+}
+
+function fieldRedraw() {
+    if (!fieldCtx) return;
+    fieldCtx.clearRect(0, 0, fieldCanvas.width, fieldCanvas.height);
+    fieldCtx.lineWidth = 3;
+    fieldCtx.lineCap   = 'round';
+    fieldCtx.lineJoin  = 'round';
+    for (const s of fieldStrokes) _fStroke(fieldCtx, s);
+}
+
+function _fDrawLive() {
+    fieldRedraw();
+    const W = fieldCanvas.width, H = fieldCanvas.height;
+    if (fieldCurrentStroke.length < 2) return;
+    fieldCtx.strokeStyle = fieldColor;
+    fieldCtx.lineWidth   = 3;
+    fieldCtx.lineCap     = 'round';
+    fieldCtx.lineJoin    = 'round';
+    fieldCtx.beginPath();
+    fieldCtx.moveTo(fieldCurrentStroke[0].x * W, fieldCurrentStroke[0].y * H);
+    for (let i = 1; i < fieldCurrentStroke.length; i++)
+        fieldCtx.lineTo(fieldCurrentStroke[i].x * W, fieldCurrentStroke[i].y * H);
+    fieldCtx.stroke();
+}
+
+window.fieldUndo  = () => { fieldStrokes.pop(); fieldRedraw(); };
+window.fieldErase = () => { fieldStrokes = []; fieldDrawing = false; fieldCurrentStroke = []; fieldRedraw(); };
 
 // ── Pick List ────────────────────────────────────────────────────────────────
 
@@ -5462,8 +5682,8 @@ async function renderScoutingTab(teamNumber) {
             if (!row) {
                 const span = mode === 'fused' ? fusedFuelCols.length + 1 : _cols.length + 1;
                 return `<tr style="border-bottom:1px solid #1e293b;opacity:0.45;">
-                    <td style="text-align:left;padding:4px 8px;color:#60a5fa;">QM ${matchNumber}</td>
-                    <td colspan="${span}" style="padding:4px 8px;color:#475569;font-style:italic;">No scouting data</td>
+                    <td style="text-align:left;padding:4px 8px;color:#60a5fa;white-space:nowrap;">QM ${matchNumber}</td>
+                    <td colspan="${span}" style="padding:4px 8px;color:#475569;font-style:italic;white-space:nowrap;">No scouting data</td>
                 </tr>`;
             }
             if (mode === 'fused') {
@@ -5471,23 +5691,23 @@ async function renderScoutingTab(teamNumber) {
                 const fmt = v => v != null && v > 0 ? v.toFixed(1).replace(/\.0$/, '') : '—';
                 if (!f) {
                     return `<tr style="border-bottom:1px solid #1e293b;opacity:0.5;">
-                        <td style="text-align:left;padding:4px 8px;color:#60a5fa;">QM ${matchNumber}${dupBadge}</td>
-                        ${fusedFuelCols.map(c => { const v = c.raw(row); return `<td style="text-align:right;padding:4px 6px;font-style:italic;">${typeof v === 'number' && v > 0 ? v.toFixed(1).replace(/\.0$/, '') : (v || '—')}</td>`; }).join('')}
-                        <td style="text-align:right;padding:4px 6px;color:#475569;font-style:italic;">no TBA</td>
+                        <td style="text-align:left;padding:4px 8px;color:#60a5fa;white-space:nowrap;">QM ${matchNumber}${dupBadge}</td>
+                        ${fusedFuelCols.map(c => { const v = c.raw(row); return `<td style="text-align:right;padding:4px 6px;font-style:italic;white-space:nowrap;">${typeof v === 'number' && v > 0 ? v.toFixed(1).replace(/\.0$/, '') : (v || '—')}</td>`; }).join('')}
+                        <td style="text-align:right;padding:4px 6px;color:#475569;font-style:italic;white-space:nowrap;">no TBA</td>
                     </tr>`;
                 }
                 const totalFuel = (f.autoFuelFused ?? 0) + (f.teleFuelFused ?? 0) + (f.endgameFuelFused ?? 0);
                 return `<tr style="border-bottom:1px solid #1e293b;">
-                    <td style="text-align:left;padding:4px 8px;color:#60a5fa;">QM ${matchNumber}${dupBadge}</td>
-                    ${fusedFuelCols.map(c => `<td style="text-align:right;padding:4px 6px;color:#4ade80;">${fmt(c.fused(f))}</td>`).join('')}
-                    <td style="text-align:right;padding:4px 6px;color:#4ade80;font-weight:700;">${fmt(totalFuel)}</td>
+                    <td style="text-align:left;padding:4px 8px;color:#60a5fa;white-space:nowrap;">QM ${matchNumber}${dupBadge}</td>
+                    ${fusedFuelCols.map(c => `<td style="text-align:right;padding:4px 6px;color:#4ade80;white-space:nowrap;">${fmt(c.fused(f))}</td>`).join('')}
+                    <td style="text-align:right;padding:4px 6px;color:#4ade80;font-weight:700;white-space:nowrap;">${fmt(totalFuel)}</td>
                 </tr>`;
             }
             // raw mode
             return `<tr style="border-bottom:1px solid #1e293b;">
-                <td style="text-align:left;padding:4px 8px;color:#60a5fa;">QM ${matchNumber}${dupBadge}</td>
-                ${_cols.map(c => { const v = c.raw(row); return `<td style="text-align:right;padding:4px 6px;">${typeof v === 'number' && v > 0 ? v.toFixed(1).replace(/\.0$/, '') : (v || '—')}</td>`; }).join('')}
-                <td style="text-align:right;padding:4px 6px;color:#94a3b8;">${row.endPosition || '—'}</td>
+                <td style="text-align:left;padding:4px 8px;color:#60a5fa;white-space:nowrap;">QM ${matchNumber}${dupBadge}</td>
+                ${_cols.map(c => { const v = c.raw(row); return `<td style="text-align:right;padding:4px 6px;white-space:nowrap;">${typeof v === 'number' && v > 0 ? v.toFixed(1).replace(/\.0$/, '') : (v || '—')}</td>`; }).join('')}
+                <td style="text-align:right;padding:4px 6px;color:#94a3b8;white-space:nowrap;">${row.endPosition || '—'}</td>
             </tr>`;
         };
 
@@ -5498,8 +5718,8 @@ async function renderScoutingTab(teamNumber) {
             return `
             <table style="width:100%;border-collapse:collapse;font-size:0.78em;">
                 <thead><tr style="color:#64748b;border-bottom:1px solid #334155;">
-                    <th style="text-align:left;padding:4px 8px;">Match</th>
-                    ${headers.map(h => `<th style="text-align:right;padding:4px 6px;">${h}</th>`).join('')}
+                    <th style="text-align:left;padding:4px 8px;white-space:nowrap;">Match</th>
+                    ${headers.map(h => `<th style="text-align:right;padding:4px 6px;white-space:nowrap;">${h}</th>`).join('')}
                 </tr></thead>
                 <tbody>
                 ${allEntries.map(({ matchNumber, row }) => buildMatchRow(matchNumber, row, mode)).join('')}
