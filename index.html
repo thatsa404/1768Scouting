@@ -8,7 +8,8 @@
     <title>1768 Event Hub</title>
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#0f172a">
-    <!-- iOS home screen support -->
+    <!-- Home screen support -->
+    <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="1768 Scout">
@@ -1151,8 +1152,14 @@
                 <p style="color:#64748b;font-size:0.85em;margin:0 0 10px;">Run once before the event. Fetches EPA
                     histories and the match schedule.</p>
                 <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                    <button onclick="syncProjections()"><img src="statbotics.ico" class="source-logo">Sync Statbotics</button>
-                    <button onclick="syncSchedule()">Sync Schedule</button>
+                    <div style="display:flex;flex-direction:column;gap:3px;">
+                        <button id="btn-syncProjections" onclick="syncProjections()"><img src="statbotics.ico" class="source-logo">Sync Statbotics</button>
+                        <span id="ts-statboticsProjections" style="color:#475569;font-size:0.72em;min-height:1em;"></span>
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:3px;">
+                        <button id="btn-syncSchedule" onclick="syncSchedule()">Sync Schedule</button>
+                        <span id="ts-schedule" style="color:#475569;font-size:0.72em;min-height:1em;"></span>
+                    </div>
                 </div>
             </div>
 
@@ -1164,15 +1171,15 @@
                 <p style="color:#64748b;font-size:0.85em;margin:0 0 10px;">Sync live results as matches are played.</p>
                 <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;">
                     <div style="display:flex;flex-direction:column;gap:3px;">
-                        <button onclick="syncStatboticsLive()"><img src="statbotics.ico" class="source-logo">Sync Statbotics Live</button>
+                        <button id="btn-syncStatboticsLive" onclick="syncStatboticsLive()"><img src="statbotics.ico" class="source-logo">Sync Statbotics Live</button>
                         <span id="ts-statboticsLive" style="color:#475569;font-size:0.72em;min-height:1em;"></span>
                     </div>
                     <div style="display:flex;flex-direction:column;gap:3px;">
-                        <button onclick="syncTBAOPR()"><img src="tba.png" class="source-logo">Sync TBA OPR</button>
+                        <button id="btn-syncTBAOPR" onclick="syncTBAOPR()"><img src="tba.png" class="source-logo">Sync TBA OPR</button>
                         <span id="ts-tbaOPR" style="color:#475569;font-size:0.72em;min-height:1em;"></span>
                     </div>
                     <div style="display:flex;flex-direction:column;gap:3px;">
-                        <button onclick="syncTBAMatches()"><img src="tba.png" class="source-logo">Sync TBA Matches</button>
+                        <button id="btn-syncTBAMatches" onclick="syncTBAMatches()"><img src="tba.png" class="source-logo">Sync TBA Matches</button>
                         <span id="ts-tbaMatches" style="color:#475569;font-size:0.72em;min-height:1em;"></span>
                     </div>
                 </div>
@@ -1662,10 +1669,24 @@
         <div id="tools-tab-field" style="display:none;"></div>
 
         <div id="tools-tab-draft" style="display:none;">
-            <div
-                style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+            <!-- Mode selector header -->
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #1e293b;">
+                <div style="display:inline-flex;border:1px solid #334155;border-radius:6px;overflow:hidden;">
+                    <button id="draftModeMockBtn" onclick="setDraftMode('mock')"
+                        style="border:none;padding:7px 18px;font-size:0.88em;font-weight:700;cursor:pointer;background:#1e293b;color:#f8fafc;">Mock Draft</button>
+                    <button id="draftModeRealBtn" onclick="setDraftMode('real')"
+                        style="border:none;padding:7px 18px;font-size:0.88em;font-weight:700;cursor:pointer;background:transparent;color:#64748b;">Real Alliances</button>
+                </div>
+                <div id="draftRealControls" style="display:none;gap:8px;align-items:center;">
+                    <button onclick="loadTBAAlliances()"
+                        style="background:#1e3a5f;color:#60a5fa;border:1px solid #3b82f6;border-radius:8px;padding:8px 16px;font-size:0.9rem;cursor:pointer;font-weight:600;">↓ Load from TBA</button>
+                    <span id="draftAllianceLoadStatus" style="color:#475569;font-size:0.78em;"></span>
+                </div>
+            </div>
+            <!-- Operation controls -->
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                 <p id="draftStatus" style="color:#94a3b8;font-style:italic;font-size:0.9em;margin:0;"></p>
-                <div style="display:flex;gap:8px;">
+                <div id="draftMockControls" style="display:flex;gap:8px;">
                     <button onclick="draftUndo()"
                         style="background:#334155;color:#f8fafc;border:none;border-radius:8px;padding:8px 16px;font-size:1rem;cursor:pointer;font-weight:600;">Undo</button>
                     <button onclick="resetDraft()"
@@ -1720,7 +1741,7 @@
             <h2 id="detailTeamLabel">Team --</h2>
         </div>
 
-        <div class="detail-tabs">
+        <div class="detail-tabs" id="teamDetailTabs">
             <button class="detail-tab-btn active" onclick="switchDetailTab('overview')">Overview</button>
             <button class="detail-tab-btn" onclick="switchDetailTab('epa-opr')">EPA/OPR</button>
             <button class="detail-tab-btn" onclick="switchDetailTab('scouting')">Scouting</button>

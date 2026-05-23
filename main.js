@@ -1521,10 +1521,47 @@ async function importArchiveBundle(data, eventKey) {
         if (data.teams?.length)    await db.teams.bulkPut(data.teams);
         if (data.tbaTeams?.length) await db.tbaTeams.bulkPut(data.tbaTeams);
         if (data.matches?.length)  await db.matches.bulkPut(data.matches);
+        if (data.tbaAlliances?.length) {
+            localStorage.setItem(`tbaAlliances_${eventKey}`, JSON.stringify(data.tbaAlliances));
+            const alliances = Array.from({ length: 8 }, (_, i) => {
+                const a = data.tbaAlliances[i];
+                if (!a) return { captain: null, pick1: null, pick2: null };
+                const strip = key => a.picks[key]?.replace(/^frc/i, '') || null;
+                return { captain: strip(0), pick1: strip(1), pick2: strip(2) };
+            });
+            localStorage.setItem('realDraftState', JSON.stringify({ alliances, currentAlliance: 8, currentRound: 2 }));
+        }
         return `Archive loaded: ${data.scoutingRows.length} rows + ${data.teams?.length || 0} teams + ${data.matches?.length || 0} matches`;
     } else {
         localStorage.setItem(`scoutingData_${eventKey}`, JSON.stringify(data));
         return `${data.length} rows loaded`;
+    }
+}
+
+// Updates OBE (overtaken by events) indicators on sync buttons based on stored archive coverage.
+// coverage keys: teams, tbaTeams, matches, breakdowns, scouting
+function updateOBEStatus(eventKey) {
+    const raw = eventKey ? localStorage.getItem(`archiveCoverage_${eventKey}`) : null;
+    const cov = raw ? JSON.parse(raw) : {};
+
+    const entries = [
+        { btnId: 'btn-syncProjections',    spanId: 'ts-statboticsProjections', covered: !!cov.teams,      setText: true },
+        { btnId: 'btn-syncSchedule',       spanId: 'ts-schedule',              covered: !!cov.matches,    setText: true },
+        { btnId: 'btn-syncStatboticsLive', spanId: 'ts-statboticsLive',        covered: !!cov.teams,      setText: false },
+        { btnId: 'btn-syncTBAOPR',         spanId: 'ts-tbaOPR',                covered: !!cov.tbaTeams,   setText: false },
+        { btnId: 'btn-syncTBAMatches',     spanId: 'ts-tbaMatches',            covered: !!cov.breakdowns, setText: false },
+        { btnId: 'btn-syncScoutingData',   spanId: 'scouting-sync-status',     covered: !!cov.scouting,   setText: false },
+        { btnId: 'btn-syncPitData',        spanId: 'pit-sync-status',          covered: !!cov.pit,        setText: false },
+    ];
+
+    for (const { btnId, spanId, covered, setText } of entries) {
+        const btn  = document.getElementById(btnId);
+        const span = document.getElementById(spanId);
+        if (btn)  btn.style.opacity = covered ? '0.5' : '';
+        if (span) {
+            if (setText) span.textContent = covered ? '✓ from archive' : '';
+            span.style.color = covered ? '#4ade80' : '#475569';
+        }
     }
 }
 
@@ -1562,6 +1599,17 @@ window.loadEventArchive = async function (eventKey) {
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
         const summary = await importArchiveBundle(data, eventKey);
+
+        // Store per-field coverage so updateOBEStatus can dim the right buttons
+        localStorage.setItem(`archiveCoverage_${eventKey}`, JSON.stringify({
+            teams:      !!(data.teams?.length),
+            tbaTeams:   !!(data.tbaTeams?.length),
+            matches:    !!(data.matches?.length),
+            breakdowns: !!(data.matches?.some(m => m.redBreakdown || m.blueBreakdown)),
+            scouting:   !!(data.scoutingRows?.length),
+            pit:        !!(data.pitRows?.length),
+        }));
+        updateOBEStatus(eventKey);
 
         // Restore event key to the input so subsequent actions work
         const keyInput = document.getElementById('eventKeyInput');
@@ -1734,6 +1782,7 @@ window.saveScoutingArchive = async function () {
     ]);
 
     const pitRaw = localStorage.getItem(`pitData_${eventKey}`);
+    const allianceRaw = localStorage.getItem(`tbaAlliances_${eventKey}`);
     const bundle = {
         eventKey,
         archived: new Date().toISOString(),
@@ -1742,6 +1791,7 @@ window.saveScoutingArchive = async function () {
         teams: teams.map(({ photoUrl: _, ...rest }) => rest),
         tbaTeams,
         matches,
+        tbaAlliances: allianceRaw ? JSON.parse(allianceRaw) : null,
     };
 
     const a = document.createElement('a');
@@ -1812,7 +1862,7 @@ function renderScoutingSection() {
                    <span style="color:#34d399;font-size:0.78em;font-weight:700;">● Configured</span>
                </div>
                <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-                   <button onclick="syncPitData()">Sync Pit Data</button>
+                   <button id="btn-syncPitData" onclick="syncPitData()">Sync Pit Data</button>
                    ${hasPitData ? `<button onclick="clearPitData()" style="background:#7f1d1d;color:#fca5a5;">Clear Pit Data</button>` : ''}
                    <span id="pit-sync-status" style="color:#475569;font-size:0.78em;">${pitSyncStatus}</span>
                </div>
@@ -1835,7 +1885,7 @@ function renderScoutingSection() {
                     ${gameLabel}
                 </div>
                 <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-                    <button onclick="syncScoutingData()">Sync Match Data</button>
+                    <button id="btn-syncScoutingData" onclick="syncScoutingData()">Sync Match Data</button>
                     ${hasData ? `<button onclick="clearScoutingData()" style="background:#7f1d1d;color:#fca5a5;">Clear Match Data</button>` : ''}
                     <span id="scouting-sync-status" style="color:#475569;font-size:0.78em;">${syncStatus}</span>
                 </div>
@@ -1854,6 +1904,8 @@ function renderScoutingSection() {
                 <span id="scoutingAutoSyncStatus" style="color:#94a3b8;font-size:0.85em;font-variant-numeric:tabular-nums;"></span>
             </div>
         </div>` : ''}`;
+
+    updateOBEStatus(eventKey);
 }
 
 window.clearCache = async function () {
@@ -1870,12 +1922,16 @@ window.clearCache = async function () {
         localStorage.removeItem('lastEventKey');
         updateAppEventKey(null);
         localStorage.removeItem('pickListOrder');
+        localStorage.removeItem('mockDraftState');
+        localStorage.removeItem('realDraftState');
         localStorage.removeItem('draftState');
         for (const key of ['statboticsLive', 'tbaOPR', 'tbaMatches']) {
             localStorage.removeItem(`lastSync_${key}`);
             const el = document.getElementById(`ts-${key}`);
             if (el) el.textContent = '';
         }
+        Object.keys(localStorage).filter(k => k.startsWith('archiveCoverage_')).forEach(k => localStorage.removeItem(k));
+        updateOBEStatus(null);
 
         // Clear the event key input
         const input = document.getElementById('eventKeyInput');
@@ -1909,11 +1965,16 @@ window.clearEvent = async function () {
             const el = document.getElementById(`ts-${key}`);
             if (el) el.textContent = '';
         }
+        localStorage.removeItem(`archiveCoverage_${eventKey}`);
+        updateOBEStatus(eventKey);
         localStorage.removeItem(`scoutingData_${eventKey}`);
         localStorage.removeItem(`scoutingFusedStats_${eventKey}`);
         localStorage.removeItem('lastSync_scoutingData');
         localStorage.removeItem(`pitData_${eventKey}`);
         localStorage.removeItem('lastSync_pitData');
+        localStorage.removeItem(`tbaAlliances_${eventKey}`);
+        localStorage.removeItem('mockDraftState');
+        localStorage.removeItem('realDraftState');
 
         displayTeams();
         displaySchedule();
@@ -4616,13 +4677,17 @@ async function renderPickList() {
         const redRP = m.redBreakdown?.rp ?? ((redWon ? 3 : tie ? 1 : 0) + bonusRP(m.redBreakdown));
         const blueRP = m.blueBreakdown?.rp ?? ((blueWon ? 3 : tie ? 1 : 0) + bonusRP(m.blueBreakdown));
         for (const team of (m.red || [])) {
-            if (!rpMap[team]) rpMap[team] = { rp: 0, wins: 0, ties: 0, losses: 0 };
+            if (!rpMap[team]) rpMap[team] = { rp: 0, wins: 0, ties: 0, losses: 0, totalScore: 0, matches: 0 };
             rpMap[team].rp += redRP;
+            rpMap[team].totalScore += m.redScore;
+            rpMap[team].matches++;
             if (redWon) rpMap[team].wins++; else if (tie) rpMap[team].ties++; else rpMap[team].losses++;
         }
         for (const team of (m.blue || [])) {
-            if (!rpMap[team]) rpMap[team] = { rp: 0, wins: 0, ties: 0, losses: 0 };
+            if (!rpMap[team]) rpMap[team] = { rp: 0, wins: 0, ties: 0, losses: 0, totalScore: 0, matches: 0 };
             rpMap[team].rp += blueRP;
+            rpMap[team].totalScore += m.blueScore;
+            rpMap[team].matches++;
             if (blueWon) rpMap[team].wins++; else if (tie) rpMap[team].ties++; else rpMap[team].losses++;
         }
     }
@@ -4724,12 +4789,20 @@ async function renderPickList() {
             switch (pickListSortCol) {
                 case 'epa':      return r.epaVal;
                 case 'opr':      return r.opr ?? -999;
-                case 'rp':       return r.rp.rp;
                 case 'scoutEPA': return r.scoutEPA ?? -999;
                 default:         return (1 - r.composite) * 100;
             }
         };
-        unranked.sort((a, b) => (getValue(b) - getValue(a)) * pickListSortDir);
+        unranked.sort((a, b) => {
+            if (pickListSortCol === 'rp') {
+                const rpDiff = b.rp.rp - a.rp.rp;
+                if (rpDiff !== 0) return rpDiff * pickListSortDir;
+                const avgA = a.rp.matches > 0 ? a.rp.totalScore / a.rp.matches : 0;
+                const avgB = b.rp.matches > 0 ? b.rp.totalScore / b.rp.matches : 0;
+                return (avgB - avgA) * pickListSortDir;
+            }
+            return (getValue(b) - getValue(a)) * pickListSortDir;
+        });
         rows = [...ranked, ...unranked];
     }
 
@@ -4739,25 +4812,30 @@ async function renderPickList() {
         return pickListSortDir === 1 ? ' ↓' : ' ↑';
     };
     const th = (label, col, extra = '') =>
-        `<th style="padding:10px 8px;border-bottom:2px solid #334155;color:#94a3b8;text-align:center;cursor:pointer;${extra}" onclick="sortPickListBy('${col}')">${label}${arrowFor(col)}</th>`;
+        `<th style="padding:10px 8px;border-bottom:2px solid #334155;color:#94a3b8;text-align:center;cursor:pointer;white-space:nowrap;${extra}" onclick="sortPickListBy('${col}')">${label}${arrowFor(col)}</th>`;
     table.querySelector('thead').innerHTML = `<tr>
         <th style="width:28px;padding:10px 4px;border-bottom:2px solid #334155;"></th>
-        <th style="width:56px;padding:10px 8px;border-bottom:2px solid #334155;color:#94a3b8;text-align:center;">#</th>
-        <th style="padding:10px 8px;border-bottom:2px solid #334155;color:#94a3b8;text-align:left;">Team</th>
-        <th style="padding:10px 8px;border-bottom:2px solid #334155;color:#94a3b8;text-align:left;">Name</th>
+        <th style="width:56px;padding:10px 8px;border-bottom:2px solid #334155;color:#94a3b8;text-align:center;white-space:nowrap;">#</th>
+        <th style="padding:10px 8px;border-bottom:2px solid #334155;color:#94a3b8;text-align:left;white-space:nowrap;">Team</th>
+        <th style="padding:10px 8px;border-bottom:2px solid #334155;color:#94a3b8;text-align:left;white-space:nowrap;">Name</th>
         ${th('Score', 'composite')}
-        ${th('RP', 'rp')}
+        ${th('RP Rank', 'rp')}
         ${th('<img src="./statbotics.ico" height="18" style="vertical-align:middle;opacity:0.85;" title="EPA / Ceiling (Statbotics)">', 'epa')}
         ${th('<img src="./tba.png" height="18" style="vertical-align:middle;opacity:0.85;" title="OPR (TBA)">', 'opr')}
         ${th('<img src="./sheets.png" height="18" style="vertical-align:middle;opacity:0.85;" title="Scouting EPA (Google Sheets)">', 'scoutEPA')}
         <th style="width:60px;padding:10px 8px;border-bottom:2px solid #334155;"></th>
     </tr>`;
 
-    // RP rank (1 = most RP) for top-10 badge
+    // RP rank (1 = most RP), avg match score as tiebreaker
     const rpRankMap = {};
     if (hasRP) {
         Object.entries(rpMap)
-            .sort(([, a], [, b]) => b.rp - a.rp)
+            .sort(([, a], [, b]) => {
+                if (b.rp !== a.rp) return b.rp - a.rp;
+                const avgA = a.matches > 0 ? a.totalScore / a.matches : 0;
+                const avgB = b.matches > 0 ? b.totalScore / b.matches : 0;
+                return avgB - avgA;
+            })
             .forEach(([tn,], i) => { rpRankMap[tn] = i + 1; });
     }
 
@@ -4793,10 +4871,7 @@ async function renderPickList() {
                 <span style="color:#475569;font-size:1.2em;line-height:1;">⠿</span>
             </td>
             <td style="padding:10px 8px;border-bottom:1px solid #1e293b;text-align:center;">
-                <div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
-                    <span class="pick-pos" style="color:#64748b;font-weight:700;">${rowPos}</span>
-                    <span style="color:${ts.color};font-size:0.75em;font-weight:800;letter-spacing:0.08em;">${r.tier}</span>
-                </div>
+                <span class="pick-pos" style="color:#64748b;font-weight:700;">${rowPos}</span>
             </td>
             <td style="padding:13px 10px;border-bottom:1px solid #1e293b;cursor:pointer;white-space:nowrap;" onclick="viewTeamDetail(${team.teamNumber})">
                 <strong style="color:#f8fafc;">${team.teamNumber}</strong>${ownStar(team.teamNumber)}
@@ -4807,9 +4882,7 @@ async function renderPickList() {
             ${td(`<span style="color:${ts.color};">${compStr}</span>`)}
             ${(() => {
                 const rpRank = rpRankMap[String(team.teamNumber)];
-                const rankBadge = rpRank != null && rpRank <= 10
-                    ? `<div style="color:#94a3b8;font-size:0.72em;font-weight:700;margin-top:2px;">#${rpRank}</div>` : '';
-                return td(`${hasRP ? rp.rp : '—'}${rankBadge}`);
+                return td(rpRank != null ? `<span style="color:#94a3b8;font-weight:700;">#${rpRank}</span>` : '—');
             })()}
             ${td(`${epaVal.toFixed(1)}${ceilBadge}`)}
             ${td(hasOPR ? `${opr != null ? opr.toFixed(1) : '—'}${oprBadge}` : '—')}
@@ -4922,12 +4995,37 @@ const DRAFT_ALLIANCE_COLORS = [
 ];
 let draftRPRankedTeams = [];
 let draftHistory = [];
+let draftMode = localStorage.getItem('draftMode') || 'mock';
+
+window.setDraftMode = function (mode) {
+    draftMode = mode;
+    localStorage.setItem('draftMode', mode);
+    if (mode === 'real' && !loadDraftState()) {
+        const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+        if (eventKey) {
+            const raw = localStorage.getItem(`tbaAlliances_${eventKey}`);
+            if (raw) {
+                try {
+                    const data = JSON.parse(raw);
+                    const alliances = Array.from({ length: 8 }, (_, i) => {
+                        const a = data[i];
+                        if (!a) return { captain: null, pick1: null, pick2: null };
+                        const strip = key => a.picks[key]?.replace(/^frc/i, '') || null;
+                        return { captain: strip(0), pick1: strip(1), pick2: strip(2) };
+                    });
+                    saveDraftState({ alliances, currentAlliance: 8, currentRound: 2 });
+                } catch {}
+            }
+        }
+    }
+    renderDraft();
+};
 
 function loadDraftState() {
-    try { const s = JSON.parse(localStorage.getItem('draftState')); if (s?.alliances?.length === 8) return s; } catch { }
+    try { const s = JSON.parse(localStorage.getItem(`${draftMode}DraftState`)); if (s?.alliances?.length === 8) return s; } catch { }
     return null;
 }
-function saveDraftState(s) { localStorage.setItem('draftState', JSON.stringify(s)); }
+function saveDraftState(s) { localStorage.setItem(`${draftMode}DraftState`, JSON.stringify(s)); }
 function freshDraftState() {
     return { alliances: Array.from({ length: 8 }, () => ({ captain: null, pick1: null, pick2: null })), currentAlliance: 0, currentRound: 1 };
 }
@@ -4949,9 +5047,40 @@ function draftFillCaptain(state) {
     if (next != null) a.captain = String(next);
 }
 
+window.loadTBAAlliances = async function () {
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    if (!eventKey) { alert('No event key — enter one on the Home tab first.'); return; }
+
+    const statusEl = document.getElementById('draftAllianceLoadStatus');
+    if (statusEl) statusEl.textContent = 'Loading…';
+
+    try {
+        const data = await fetchTBA(`/event/${eventKey}/alliances`);
+        if (!Array.isArray(data) || !data.length) {
+            if (statusEl) statusEl.textContent = 'No alliance data available yet.';
+            return;
+        }
+
+        const alliances = Array.from({ length: 8 }, (_, i) => {
+            const a = data[i];
+            if (!a) return { captain: null, pick1: null, pick2: null };
+            const strip = key => a.picks[key]?.replace(/^frc/i, '') || null;
+            return { captain: strip(0), pick1: strip(1), pick2: strip(2) };
+        });
+
+        localStorage.setItem(`tbaAlliances_${eventKey}`, JSON.stringify(data));
+        draftHistory = [];
+        saveDraftState({ alliances, currentAlliance: 8, currentRound: 2 });
+        renderDraft();
+        if (statusEl) statusEl.textContent = `Loaded ${data.length} alliance${data.length !== 1 ? 's' : ''} from TBA.`;
+    } catch (err) {
+        if (statusEl) statusEl.textContent = `Error: ${err.message}`;
+    }
+};
+
 window.resetDraft = function () {
     draftHistory = [];
-    localStorage.removeItem('draftState');
+    localStorage.removeItem('mockDraftState');
     renderDraft();
 };
 window.draftUndo = function () {
@@ -5031,11 +5160,26 @@ async function renderDraft() {
     saveDraftState(state);
 
     const picked = buildDraftPickedSet(state.alliances);
-    const isDone = state.currentAlliance >= 8 || state.currentAlliance < 0;
+    const isReal = draftMode === 'real';
+    const isDone = isReal || state.currentAlliance >= 8 || state.currentAlliance < 0;
     const isUser = !isDone && (state.currentRound === 2 || state.alliances[state.currentAlliance]?.captain !== null);
 
+    // Sync mode toggle appearance and control visibility
+    const mockBtn = document.getElementById('draftModeMockBtn');
+    const realBtn = document.getElementById('draftModeRealBtn');
+    const mockControls = document.getElementById('draftMockControls');
+    const realControls = document.getElementById('draftRealControls');
+    if (mockBtn) { mockBtn.style.background = isReal ? 'transparent' : '#1e293b'; mockBtn.style.color = isReal ? '#64748b' : '#f8fafc'; }
+    if (realBtn) { realBtn.style.background = isReal ? '#1e293b' : 'transparent'; realBtn.style.color = isReal ? '#f8fafc' : '#64748b'; }
+    if (mockControls) mockControls.style.display = isReal ? 'none' : 'flex';
+    if (realControls) realControls.style.display = isReal ? 'flex' : 'none';
+
     if (statusEl) {
-        if (isDone) {
+        if (isReal) {
+            const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+            const hasAlliances = eventKey && !!localStorage.getItem(`tbaAlliances_${eventKey}`);
+            statusEl.textContent = hasAlliances ? 'Showing real alliance selection.' : 'No alliance data — load from TBA above.';
+        } else if (isDone) {
             statusEl.textContent = 'Draft complete.';
         } else if (isUser) {
             const which = state.currentRound === 1 ? '1st pick' : '2nd pick';
@@ -5327,12 +5471,6 @@ async function renderOverview(team, tbaTeam) {
 
         ${sectionLabel('Notes')}
         <div id="overview-notes-section"></div>
-
-        ${sectionLabel('Pit Scouting')}
-        ${placeholder('No pit data recorded yet.')}
-
-        ${sectionLabel('Match Scouting')}
-        ${placeholder('No match observations recorded yet.')}
     `;
 
     renderNoteSection(team.teamNumber);
@@ -5420,7 +5558,7 @@ window.switchDetailTab = async function (tab) {
     tabs.forEach(t => {
         document.getElementById(`tab-${t}`).style.display = t === tab ? 'block' : 'none';
     });
-    document.querySelectorAll('.detail-tab-btn').forEach((btn, i) => {
+    document.querySelectorAll('#teamDetailTabs .detail-tab-btn').forEach((btn, i) => {
         btn.classList.toggle('active', tabs[i] === tab);
     });
     if (tab === 'overview' && activeTeamData) {
@@ -6061,12 +6199,13 @@ const bootApp = async () => {
         _archiveCheckTimer = setTimeout(() => checkEventArchive(eventKey), 500);
     });
 
-    // Restore sync timestamps
+    // Restore sync timestamps and OBE indicators
     for (const key of ['statboticsLive', 'tbaOPR', 'tbaMatches']) {
         const saved = localStorage.getItem(`lastSync_${key}`);
         const el = document.getElementById(`ts-${key}`);
         if (saved && el) el.textContent = `Last sync: ${saved}`;
     }
+    updateOBEStatus(localStorage.getItem('lastEventKey'));
 
     // 1. Set the initial view (Home)
     initUIMode();
