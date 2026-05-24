@@ -1,26 +1,18 @@
 Scouting App To-do
 
-
-
-
-- Team detail page
-   - Image incorporation (Upload to imgur?)
-   - Add tabs
-	- 1. Default (radar chart?)
-	- 3. Scouting data & user notes (Make TBD...)
-	- 4. Pit scouting
-
-- Match details should link to team pages
-- Wolf image - background
-
 - Password protect?
 
-Quick fixes
-
-
-
-- Adjust components shown in match prep (not just statbotics?)
+------- GENERAL
+- If on overview and click another team number, stay on overview!! Way more valuable with match info
+- Match predictions
+- Alliance predictions
+- Link to livestream
 - Compare teams page?
-- Get scouting info up and running
+
+------- YEAR SPECIFIC
+2025 - Table for auto/tele coral/algae in team scouting tab. Add tier badges to each value. Remove touched/tipped/defended. Died becomes x/y, add Endgame state in x/y format. Consolidate chicklets up top of table?
+2025 - Dashboard & match prep & pick list should really have component information, not mixed EPAs.... Customize per year. 2025 should be coral (L1-L4), algae, climb? 2026 should be auto EPA/type, total EPA, shuttling, defense skill?
+2025 - Maybe dashboard has a toggle for EPAs vs. components?
+
 
 

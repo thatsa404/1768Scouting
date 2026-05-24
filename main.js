@@ -2074,8 +2074,7 @@ window.runManualAnalysis = async function () {
         analysis: team.analysis
     });
 
-    // Refresh the main table in the background
-    displayTeams();
+    refreshEPADisplays();
 
     document.getElementById('analysisFeedback').innerText = `✅ Analysis complete for matches ${startInput} to ${Math.min(endInput, playedMatches.length)}.`;
 
@@ -2748,7 +2747,8 @@ window.displayTBATeams = async function () {
 
     // Use individually-ignored LOO, then globally-recomputed OPR, then raw TBA OPR.
     const effOPR = t => {
-        if (t.ignoredMatchKey && t.adjustedOPR != null && !globalIgnored.has(t.ignoredMatchKey))
+        const keys = getTeamIgnoredKeys(t);
+        if (keys.length > 0 && t.adjustedOPR != null && keys.some(k => !globalIgnored.has(k)))
             return t.adjustedOPR;
         if (globalOPRMap) return globalOPRMap[t.teamNumber] ?? (t.opr || 0);
         return t.opr || 0;
@@ -2783,7 +2783,7 @@ window.displayTBATeams = async function () {
         row.style.borderLeft = `6px solid ${TIER_STYLE[tier].color}`;
         row.style.cursor = 'pointer';
         row.onclick = () => viewTeamDetail(team.teamNumber, 'epa-opr');
-        const oprCell = team.ignoredMatchKey
+        const oprCell = getTeamIgnoredKeys(team).some(k => !globalIgnored.has(k))
             ? `${eff.toFixed(1)}&thinsp;<span style="color:#fbbf24; font-size:0.7em; font-weight:600;">LOO</span>`
             : eff.toFixed(1);
         row.innerHTML = `
@@ -2946,7 +2946,8 @@ async function renderAtAGlance() {
 
     const effOPR = tba => {
         if (!tba) return null;
-        if (tba.ignoredMatchKey && tba.adjustedOPR != null && !globalIgnored.has(tba.ignoredMatchKey))
+        const keys = getTeamIgnoredKeys(tba);
+        if (keys.length > 0 && tba.adjustedOPR != null && keys.some(k => !globalIgnored.has(k)))
             return tba.adjustedOPR;
         if (globalOPRMap) return globalOPRMap[tba.teamNumber] ?? tba.opr ?? null;
         return tba.opr ?? null;
@@ -2996,12 +2997,21 @@ async function renderAtAGlance() {
             if (processed?.config?.computeEPABreakdown) {
                 const { config, byTeam } = processed;
                 for (const [tn, rawRows] of Object.entries(byTeam)) {
-                    const { rows: deduped } = deduplicateTeamRows(rawRows);
+                    const tbaEntry = tbaTeamMap[parseInt(tn)];
+                    const scoutIgnoreKeys = tbaEntry?.scoutingIgnoreActive ? getTeamIgnoredKeys(tbaEntry) : [];
+                    let { rows: deduped } = deduplicateTeamRows(rawRows);
+                    let ignoredMatchNums = new Set();
+                    if (scoutIgnoreKeys.length > 0) {
+                        ignoredMatchNums = new Set(allMatches.filter(m => scoutIgnoreKeys.includes(m.key)).map(m => m.matchNumber));
+                        deduped = deduped.filter(r => !ignoredMatchNums.has(r.matchNumber));
+                    }
                     const rawStats = config.aggregateTeam(deduped);
                     const fusedResult = fusedCache?.teams?.[tn];
-                    const isFused = !!(fusedResult?.available && config.computeFusedEPABreakdown);
+                    const effectiveFused = (fusedResult?.available && ignoredMatchNums.size > 0)
+                        ? refilteredFusedStats(fusedResult, ignoredMatchNums) : fusedResult;
+                    const isFused = !!(effectiveFused?.available && config.computeFusedEPABreakdown);
                     const breakdown = isFused
-                        ? config.computeFusedEPABreakdown(fusedResult.stats)
+                        ? config.computeFusedEPABreakdown(effectiveFused.stats)
                         : config.computeEPABreakdown(rawStats);
                     scoutEPAMap[tn] = { total: breakdown.total, isFused };
                 }
@@ -3018,7 +3028,7 @@ async function renderAtAGlance() {
         const analysis = team.analysis || {};
         const hasCeil = analysis.ceiling != null && analysis.ceiling !== '—';
         const epaVal = hasCeil ? parseFloat(analysis.ceiling) : (team.currentEPA || 0);
-        const hasLOO = tba?.ignoredMatchKey && tba.adjustedOPR != null && !globalIgnored.has(tba.ignoredMatchKey);
+        const hasLOO = getTeamIgnoredKeys(tba).some(k => !globalIgnored.has(k)) && tba?.adjustedOPR != null;
         const hasAdj = !hasLOO && globalOPRMap != null;
         const scoutData = scoutEPAMap[tn];
         return { team, tba, rp, opr, epaVal, hasCeil, hasLOO, hasAdj,
@@ -3311,13 +3321,21 @@ window.renderMatchInfluenceTab = async function () {
 window.setGloballyIgnored = async function (matchKey, ignored) {
     await db.matches.update(matchKey, { globallyIgnored: ignored || null });
 
-    // When globally ignoring a match, clear any individual ignores of that same match.
+    // When globally ignoring a match, remove it from any team's individual ignore list.
     if (ignored) {
-        const affected = await db.tbaTeams.filter(t => t.ignoredMatchKey === matchKey).toArray();
+        const affected = await db.tbaTeams.filter(t =>
+            (Array.isArray(t.ignoredMatchKeys) && t.ignoredMatchKeys.includes(matchKey)) ||
+            t.ignoredMatchKey === matchKey
+        ).toArray();
         if (affected.length > 0) {
-            await Promise.all(affected.map(t =>
-                db.tbaTeams.update(t.teamNumber, { ignoredMatchKey: null, adjustedOPR: null })
-            ));
+            await Promise.all(affected.map(t => {
+                const keys = getTeamIgnoredKeys(t).filter(k => k !== matchKey);
+                return db.tbaTeams.update(t.teamNumber, {
+                    ignoredMatchKeys: keys.length > 0 ? keys : null,
+                    ignoredMatchKey:  null,
+                    adjustedOPR:      null,
+                });
+            }));
         }
     }
 
@@ -3706,21 +3724,35 @@ window.displayScoutingTeams = async function () {
         }
     }
 
+    // Load TBA team records so we can respect per-team scouting exclusions
+    const allTBATeamsForScout = await db.tbaTeams.toArray();
+    const tbaTeamMapForScout  = Object.fromEntries(allTBATeamsForScout.map(t => [String(t.teamNumber), t]));
+    const allMatchesForScout  = await db.matches.toArray();
+
     // Build rows: use fused EPA breakdown when available, raw scouting otherwise
     let rows = Object.entries(byTeam)
         .filter(([teamNumber]) => !knownTeams || knownTeams.has(teamNumber))
         .map(([teamNumber, rawRows]) => {
-        const { rows: deduped } = deduplicateTeamRows(rawRows);
+        const tbaEntry = tbaTeamMapForScout[teamNumber];
+        const scoutIgnoreKeys = tbaEntry?.scoutingIgnoreActive ? getTeamIgnoredKeys(tbaEntry) : [];
+        let { rows: deduped } = deduplicateTeamRows(rawRows);
+        let ignoredMatchNums = new Set();
+        if (scoutIgnoreKeys.length > 0) {
+            ignoredMatchNums = new Set(allMatchesForScout.filter(m => scoutIgnoreKeys.includes(m.key)).map(m => m.matchNumber));
+            deduped = deduped.filter(r => !ignoredMatchNums.has(r.matchNumber));
+        }
         const rawStats = config.aggregateTeam(deduped);
         const fusedResult = fusedCache?.teams?.[teamNumber];
-        const isFused = fusedResult?.available && config.computeFusedEPABreakdown;
+        const effectiveFused = (fusedResult?.available && ignoredMatchNums.size > 0)
+            ? refilteredFusedStats(fusedResult, ignoredMatchNums) : fusedResult;
+        const isFused = effectiveFused?.available && config.computeFusedEPABreakdown;
         const breakdown = isFused
-            ? config.computeFusedEPABreakdown(fusedResult.stats)
+            ? config.computeFusedEPABreakdown(effectiveFused.stats)
             : config.computeEPABreakdown(rawStats);
         const funcVals = {};
         if (config.functionalColumns) {
             for (const col of config.functionalColumns) {
-                funcVals[col.sortKey] = col.getValue(rawStats, fusedResult) ?? null;
+                funcVals[col.sortKey] = col.getValue(rawStats, effectiveFused) ?? null;
             }
         }
         return { teamNumber, matches: rawStats.matches, isFused, ...breakdown, ...funcVals };
@@ -4662,7 +4694,8 @@ async function renderPickList() {
     }
     const effOPR = tba => {
         if (!tba) return null;
-        if (tba.ignoredMatchKey && tba.adjustedOPR != null && !globalIgnored.has(tba.ignoredMatchKey))
+        const keys = getTeamIgnoredKeys(tba);
+        if (keys.length > 0 && tba.adjustedOPR != null && keys.some(k => !globalIgnored.has(k)))
             return tba.adjustedOPR;
         if (globalOPRMap) return globalOPRMap[tba.teamNumber] ?? tba.opr ?? null;
         return tba.opr ?? null;
@@ -4703,12 +4736,21 @@ async function renderPickList() {
             if (processed?.config?.computeEPABreakdown) {
                 const { config, byTeam } = processed;
                 for (const [tn, rawRows] of Object.entries(byTeam)) {
-                    const { rows: deduped } = deduplicateTeamRows(rawRows);
+                    const tbaEntry = tbaTeamMap[parseInt(tn)];
+                    const scoutIgnoreKeys = tbaEntry?.scoutingIgnoreActive ? getTeamIgnoredKeys(tbaEntry) : [];
+                    let { rows: deduped } = deduplicateTeamRows(rawRows);
+                    let ignoredMatchNums = new Set();
+                    if (scoutIgnoreKeys.length > 0) {
+                        ignoredMatchNums = new Set(allMatches.filter(m => scoutIgnoreKeys.includes(m.key)).map(m => m.matchNumber));
+                        deduped = deduped.filter(r => !ignoredMatchNums.has(r.matchNumber));
+                    }
                     const rawStats = config.aggregateTeam(deduped);
                     const fusedResult = fusedCache?.teams?.[tn];
-                    const isFused = !!(fusedResult?.available && config.computeFusedEPABreakdown);
+                    const effectiveFused = (fusedResult?.available && ignoredMatchNums.size > 0)
+                        ? refilteredFusedStats(fusedResult, ignoredMatchNums) : fusedResult;
+                    const isFused = !!(effectiveFused?.available && config.computeFusedEPABreakdown);
                     const breakdown = isFused
-                        ? config.computeFusedEPABreakdown(fusedResult.stats)
+                        ? config.computeFusedEPABreakdown(effectiveFused.stats)
                         : config.computeEPABreakdown(rawStats);
                     scoutEPAMap[tn] = { total: breakdown.total, isFused };
                 }
@@ -4725,7 +4767,7 @@ async function renderPickList() {
         const analysis = team.analysis || {};
         const hasCeil = analysis.ceiling != null && analysis.ceiling !== '—';
         const epaVal = hasCeil ? parseFloat(analysis.ceiling) : (team.currentEPA || 0);
-        const hasLOO = tba?.ignoredMatchKey && tba.adjustedOPR != null && !globalIgnored.has(tba.ignoredMatchKey);
+        const hasLOO = getTeamIgnoredKeys(tba).some(k => !globalIgnored.has(k)) && tba?.adjustedOPR != null;
         const hasAdj = !hasLOO && globalOPRMap != null;
         const scoutData = scoutEPAMap[tn];
         return { team, rp, opr, epaVal, hasCeil, hasLOO, hasAdj,
@@ -4997,6 +5039,25 @@ let draftRPRankedTeams = [];
 let draftHistory = [];
 let draftMode = localStorage.getItem('draftMode') || 'mock';
 
+function loadDraftWeights() {
+    try {
+        const w = JSON.parse(localStorage.getItem('draftEPAWeights'));
+        if (w && typeof w.scout === 'number') return w;
+    } catch {}
+    return { scout: 50, statbotics: 25, opr: 25 };
+}
+let draftWeights = loadDraftWeights();
+
+window.saveDraftWeights = function () {
+    draftWeights = {
+        scout:      Math.max(0, parseFloat(document.getElementById('wScout')?.value)      || 0),
+        statbotics: Math.max(0, parseFloat(document.getElementById('wStatbotics')?.value) || 0),
+        opr:        Math.max(0, parseFloat(document.getElementById('wOPR')?.value)         || 0),
+    };
+    localStorage.setItem('draftEPAWeights', JSON.stringify(draftWeights));
+    renderDraft();
+};
+
 window.setDraftMode = function (mode) {
     draftMode = mode;
     localStorage.setItem('draftMode', mode);
@@ -5116,7 +5177,7 @@ async function renderDraft() {
     const statusEl = document.getElementById('draftStatus');
     if (!allianceBody || !pickPanel) return;
 
-    const [allTeams, allMatches] = await Promise.all([db.teams.toArray(), db.matches.toArray()]);
+    const [allTeams, allMatches, allTBATeams] = await Promise.all([db.teams.toArray(), db.matches.toArray(), db.tbaTeams.toArray()]);
 
     if (!allTeams.length) {
         if (statusEl) statusEl.textContent = 'No team data — sync Statbotics first.';
@@ -5126,6 +5187,75 @@ async function renderDraft() {
     }
 
     const teamInfoMap = Object.fromEntries(allTeams.map(t => [String(t.teamNumber), t]));
+    const tbaTeamMap  = Object.fromEntries(allTBATeams.map(t => [String(t.teamNumber), t]));
+
+    // Build scouting EPA map (same pattern as displayTBATeams / renderPickList)
+    const scoutEPAMap = {};
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    if (eventKey) {
+        const rawStr = localStorage.getItem(`scoutingData_${eventKey}`);
+        if (rawStr) {
+            const fusedCache = (() => { try { return JSON.parse(localStorage.getItem(`scoutingFusedStats_${eventKey}`)); } catch { return null; } })();
+            const processed = processScoutingData(eventKey, JSON.parse(rawStr), getScoutingColumnOverrides(eventKey));
+            if (processed?.config?.computeEPABreakdown) {
+                const { config, byTeam } = processed;
+                for (const [tn, rawRows] of Object.entries(byTeam)) {
+                    const tbaEntry = tbaTeamMap[tn];
+                    const scoutIgnoreKeys = tbaEntry?.scoutingIgnoreActive ? getTeamIgnoredKeys(tbaEntry) : [];
+                    let { rows: deduped } = deduplicateTeamRows(rawRows);
+                    let ignoredMatchNums = new Set();
+                    if (scoutIgnoreKeys.length > 0) {
+                        ignoredMatchNums = new Set(allMatches.filter(m => scoutIgnoreKeys.includes(m.key)).map(m => m.matchNumber));
+                        deduped = deduped.filter(r => !ignoredMatchNums.has(r.matchNumber));
+                    }
+                    const rawStats = config.aggregateTeam(deduped);
+                    const fusedResult = fusedCache?.teams?.[tn];
+                    const effectiveFused = (fusedResult?.available && ignoredMatchNums.size > 0)
+                        ? refilteredFusedStats(fusedResult, ignoredMatchNums) : fusedResult;
+                    const isFused = !!(effectiveFused?.available && config.computeFusedEPABreakdown);
+                    const breakdown = isFused
+                        ? config.computeFusedEPABreakdown(effectiveFused.stats)
+                        : config.computeEPABreakdown(rawStats);
+                    scoutEPAMap[tn] = breakdown.total;
+                }
+            }
+        }
+    }
+
+    // Initialize weight inputs from persisted weights on first render
+    for (const [id, key] of [['wScout', 'scout'], ['wStatbotics', 'statbotics'], ['wOPR', 'opr']]) {
+        const el = document.getElementById(id);
+        if (el && !el.dataset.initialized) { el.value = draftWeights[key]; el.dataset.initialized = '1'; }
+    }
+
+    const hasScout = Object.keys(scoutEPAMap).length > 0;
+    const hasOPR   = allTBATeams.length > 0;
+
+    // Normalized blended EPA — falls back gracefully when a source is unavailable
+    const blendedEPA = tn => {
+        const t = teamInfoMap[tn];
+        if (!t) return 0;
+        const statVal  = parseFloat(t.analysis?.ceiling ?? t.currentEPA ?? 0) || 0;
+        const oprVal   = tbaTeamMap[tn]?.opr ?? null;
+        const scoutVal = scoutEPAMap[tn]   ?? null;
+        const sources  = [
+            { w: draftWeights.statbotics, v: statVal  },
+            { w: draftWeights.opr,        v: oprVal   },
+            { w: draftWeights.scout,      v: scoutVal },
+        ].filter(s => s.v != null && s.w > 0);
+        if (sources.length === 0) return statVal;
+        const totalW = sources.reduce((s, x) => s + x.w, 0);
+        return totalW > 0 ? sources.reduce((s, x) => s + x.v * (x.w / totalW), 0) : statVal;
+    };
+
+    // Update weight info indicator
+    const infoEl = document.getElementById('draftWeightInfo');
+    if (infoEl) {
+        const missing = [];
+        if (draftWeights.scout > 0 && !hasScout) missing.push('scouting N/A');
+        if (draftWeights.opr   > 0 && !hasOPR)   missing.push('OPR N/A');
+        infoEl.textContent = missing.join(' · ');
+    }
 
     // RP totals (mirrors renderPickList logic)
     const rpTotals = {};
@@ -5148,8 +5278,8 @@ async function renderDraft() {
         if (po.length) draftRPRankedTeams = po;
     }
 
-    // Quick tier by EPA rank (for pick panel color coding)
-    const sortedByEPA = allTeams.slice().sort((a, b) => (b.currentEPA || 0) - (a.currentEPA || 0));
+    // Quick tier by blended EPA rank (for pick panel color coding)
+    const sortedByEPA = allTeams.slice().sort((a, b) => blendedEPA(String(b.teamNumber)) - blendedEPA(String(a.teamNumber)));
     const epaRankOf = Object.fromEntries(sortedByEPA.map((t, i) => [String(t.teamNumber), i]));
     const quickTier = tn => { const r = epaRankOf[tn] ?? 99; return r < 8 ? 'S' : r < 20 ? 'A' : r < 32 ? 'B' : 'C'; };
     const TIER_CLR = { S: '#f59e0b', A: '#4ade80', B: '#a855f7', C: '#64748b' };
@@ -5190,7 +5320,7 @@ async function renderDraft() {
     }
 
     // ── Alliance table ──
-    const epaOf = tn => { const t = teamInfoMap[tn]; return t ? parseFloat(t.analysis?.ceiling ?? t.currentEPA ?? 0) || 0 : 0; };
+    const epaOf = blendedEPA;
 
     // Expected total = sum of top 24 EPAs divided evenly across 8 alliances
     const top24sum = allTeams.map(t => epaOf(String(t.teamNumber))).sort((a, b) => b - a).slice(0, 24).reduce((s, v) => s + v, 0);
@@ -5198,7 +5328,8 @@ async function renderDraft() {
 
     const teamChip = tn => {
         if (!tn) return `<span style="color:#1e293b;">—</span>`;
-        return `<span style="font-weight:800;color:#f8fafc;">${tn}</span>`;
+        return `<span style="font-weight:800;color:#f8fafc;cursor:pointer;text-decoration:underline;text-underline-offset:2px;"
+            onclick="event.stopPropagation();viewTeamDetail(${parseInt(tn)})">${tn}</span>`;
     };
     allianceBody.innerHTML = state.alliances.map((a, i) => {
         const { solid, bg } = DRAFT_ALLIANCE_COLORS[i];
@@ -5246,8 +5377,8 @@ async function renderDraft() {
         const t = teamInfoMap[tn];
         if (!t) return '';
         const tierColor = TIER_CLR[quickTier(tn)];
-        const epaVal = t.analysis?.ceiling ?? t.currentEPA;
-        const epaStr = epaVal != null && epaVal !== '—' ? parseFloat(epaVal).toFixed(1) : '';
+        const epaVal = blendedEPA(tn);
+        const epaStr = epaVal > 0 ? epaVal.toFixed(1) : '';
         return `<div class="draft-pick-item" ${isUser ? `onclick="draftPick('${tn}')"` : ''}
             style="padding:9px 12px;border-bottom:1px solid #1e293b;display:flex;align-items:center;gap:8px;
             border-left:3px solid ${tierColor};cursor:${isUser ? 'pointer' : 'default'};${!isUser ? 'opacity:0.45;' : ''}">
@@ -5281,6 +5412,10 @@ window.goBack = function () {
         }
         return;
     }
+    // Always hide the overlay explicitly — it may have been opened in split mode
+    // before the user switched to desktop, leaving currentView pointing at the
+    // left-panel view instead of teamDetailView.
+    document.getElementById('teamDetailView').style.display = 'none';
     window.switchView(window.previousView);
 };
 
@@ -5289,6 +5424,7 @@ window.goBack = function () {
 
 
 let performanceChart = null;
+let matchesChartInstance = null;
 let activeTeamNumber = null;
 let activeTeamData = null;
 let activeTBAData = null;
@@ -5311,7 +5447,8 @@ async function renderOverview(team, tbaTeam) {
     if (tbaTeam) {
         const allMatches = await db.matches.toArray();
         const globalIgnored = new Set(allMatches.filter(m => m.globallyIgnored).map(m => m.key));
-        if (tbaTeam.ignoredMatchKey && tbaTeam.adjustedOPR != null && !globalIgnored.has(tbaTeam.ignoredMatchKey)) {
+        const indivKeys = getTeamIgnoredKeys(tbaTeam);
+        if (indivKeys.some(k => !globalIgnored.has(k)) && tbaTeam.adjustedOPR != null) {
             effOPRVal = tbaTeam.adjustedOPR;
             oprSuffix = ' <span style="color:#fbbf24;font-size:0.65em;font-weight:600;">LOO</span>';
         } else if (globalIgnored.size > 0) {
@@ -5469,11 +5606,15 @@ async function renderOverview(team, tbaTeam) {
             </tbody>
         </table>
 
+        ${sectionLabel('Per-Match Performance')}
+        <div id="overview-matches-chart"></div>
+
         ${sectionLabel('Notes')}
         <div id="overview-notes-section"></div>
     `;
 
     renderNoteSection(team.teamNumber);
+    await renderMatchesTab(team.teamNumber, 'overview-matches-chart');
     if (!team.photoUrl) fetchAndCacheTeamPhoto(team.teamNumber, photoId, team.eventKey?.slice(0, 4));
 }
 
@@ -5576,6 +5717,220 @@ window.switchDetailTab = async function (tab) {
     }
 };
 
+async function renderMatchesTab(teamNumber, containerId = 'tab-matches') {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    if (!eventKey) {
+        container.innerHTML = '<p style="color:#64748b;font-style:italic;margin-top:24px;text-align:center;">Set an event key on the Home tab.</p>';
+        return;
+    }
+
+    const teamStr = String(teamNumber);
+    const [allMatches, allTBATeams, allStatTeams] = await Promise.all([
+        db.matches.toArray(), db.tbaTeams.toArray(), db.teams.toArray(),
+    ]);
+
+    const oprMap     = Object.fromEntries(allTBATeams.map(t => [String(t.teamNumber), t.opr ?? 0]));
+    const teamOPR    = oprMap[teamStr] ?? 0;
+    const evEPAMap   = Object.fromEntries(allStatTeams.map(t => [
+        String(t.teamNumber),
+        t.eventEPA?.end ?? t.eventEPA?.mean ?? (typeof t.currentEPA === 'number' ? t.currentEPA : null),
+    ]));
+    const teamEvEPA  = evEPAMap[teamStr] ?? null;
+
+    const fusedCache  = (() => { try { return JSON.parse(localStorage.getItem(`scoutingFusedStats_${eventKey}`)); } catch { return null; } })();
+    const fusedTeam   = fusedCache?.teams?.[teamStr];
+    const fusedByMatch = fusedTeam?.fusedByMatch ?? {};
+    const gameConfig  = getGameConfig(eventKey);
+    const avgFusedEPA = (fusedTeam?.available && gameConfig?.computeFusedEPABreakdown)
+        ? gameConfig.computeFusedEPABreakdown(fusedTeam.stats).total : null;
+
+    // Statbotics series: eventEPA residual (same structure as OPR, Statbotics coefficients)
+    // deviation = (allianceScore − sum(partner eventEPAs)) − team eventEPA
+
+    const tbaTeamEntry   = allTBATeams.find(t => String(t.teamNumber) === teamStr) ?? null;
+    const teamIgnoredKeys = new Set(getTeamIgnoredKeys(tbaTeamEntry));
+
+    const globalIgnored  = new Set(allMatches.filter(m => m.globallyIgnored).map(m => m.key));
+    const playedMatches  = allMatches
+        .filter(m => (m.redScore ?? -1) >= 0 && !globalIgnored.has(m.key))
+        .filter(m => m.red?.includes(teamStr) || m.blue?.includes(teamStr))
+        .sort((a, b) => a.matchNumber - b.matchNumber);
+
+    if (!playedMatches.length) {
+        container.innerHTML = '<p style="color:#64748b;font-style:italic;margin-top:24px;text-align:center;">No match data — sync TBA matches first.</p>';
+        return;
+    }
+
+    const labels     = [];
+    const oprData    = [];
+    const scoutData  = [];
+    const statEvData = [];   // eventEPA residual
+    const ignoredColIndices = new Set();
+
+    for (const m of playedMatches) {
+        const isRed       = m.red?.includes(teamStr);
+        const alliance    = isRed ? m.red : m.blue;
+        const allyScore   = isRed ? m.redScore : m.blueScore;
+        const partnerSum  = alliance.filter(t => t !== teamStr).reduce((s, t) => s + (oprMap[t] ?? 0), 0);
+        const oprDeviation = (allyScore - partnerSum) - teamOPR;
+
+        const matchFused = fusedByMatch[m.matchNumber];
+        const scoutDeviation = (matchFused && avgFusedEPA != null && gameConfig?.computeFusedEPABreakdown)
+            ? gameConfig.computeFusedEPABreakdown(matchFused).total - avgFusedEPA
+            : null;
+
+        const evPartnerSum = alliance.filter(t => t !== teamStr).reduce((s, t) => s + (evEPAMap[t] ?? 0), 0);
+        const statEvDev    = teamEvEPA != null ? (allyScore - evPartnerSum) - teamEvEPA : null;
+
+        if (teamIgnoredKeys.has(m.key)) ignoredColIndices.add(labels.length);
+
+        labels.push(`Q${m.matchNumber}`);
+        oprData.push(parseFloat(oprDeviation.toFixed(2)));
+        scoutData.push(scoutDeviation != null ? parseFloat(scoutDeviation.toFixed(2)) : null);
+        statEvData.push(statEvDev     != null ? parseFloat(statEvDev.toFixed(2))      : null);
+    }
+
+    // Per-match average across all non-null series (for the white reference line)
+    const avgData = labels.map((_, i) => {
+        const vals = [oprData[i], scoutData[i], statEvData[i]].filter(v => v != null);
+        return vals.length > 0 ? parseFloat((vals.reduce((s, v) => s + v, 0) / vals.length).toFixed(2)) : null;
+    });
+
+    const hasScout  = scoutData.some(v => v != null);
+    const hasStatEv = statEvData.some(v => v != null);
+
+    // Hatched canvas patterns distinguish the Statbotics series (///) from solid OPR/scouting bars.
+    const makeHatch = color => {
+        const sz = 10, c = document.createElement('canvas');
+        c.width = sz; c.height = sz;
+        const cx = c.getContext('2d');
+        cx.strokeStyle = color; cx.lineWidth = 2.5; cx.beginPath();
+        cx.moveTo(0, sz); cx.lineTo(sz, 0);
+        cx.stroke();
+        return cx.createPattern(c, 'repeat');
+    };
+
+    const evPosH = makeHatch('#fbbf24'); const evNegH = makeHatch('#a78bfa');
+
+    const statEvLine = teamEvEPA != null ? ` · Stat event EPA = ${teamEvEPA.toFixed(1)}` : '';
+    container.innerHTML = `
+        <div style="margin-top:16px;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;flex-wrap:wrap;gap:6px;">
+                <h3 style="margin:0;font-size:0.95em;font-weight:700;color:#f1f5f9;">Per-Match Performance vs. Average</h3>
+                <span style="color:#475569;font-size:0.78em;">
+                    OPR avg = ${teamOPR.toFixed(1)}${avgFusedEPA != null ? ` · scout avg = ${avgFusedEPA.toFixed(1)}` : ''}${statEvLine}
+                </span>
+            </div>
+            <p style="margin:0 0 12px;font-size:0.78em;color:#475569;">Bars above zero = outperformed average; below = underperformed. All series share the same zero baseline.</p>
+            <div style="position:relative;height:280px;"><canvas id="matchesChart"></canvas></div>
+        </div>
+    `;
+
+    if (matchesChartInstance) { matchesChartInstance.destroy(); matchesChartInstance = null; }
+
+    // Shade ignored match columns with a red background using beforeDraw plugin.
+    const ignoredColBgPlugin = {
+        id: 'matchesIgnoredBg',
+        beforeDraw(chart) {
+            const { ctx: c, chartArea, scales } = chart;
+            if (!chartArea || !ignoredColIndices.size) return;
+            const count = labels.length;
+            const step  = count > 0 ? scales.x.width / count : 0;
+            c.save();
+            c.fillStyle = 'rgba(239,68,68,0.12)';
+            for (const i of ignoredColIndices) {
+                const cx = scales.x.getPixelForValue(i);
+                c.fillRect(cx - step / 2, chartArea.top, step, chartArea.bottom - chartArea.top);
+            }
+            c.restore();
+        },
+    };
+
+    const chartCtx = document.getElementById('matchesChart').getContext('2d');
+    matchesChartInstance = new Chart(chartCtx, {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [
+                {
+                    label: 'OPR-implied vs avg',
+                    data: oprData,
+                    backgroundColor: oprData.map(v => v >= 0 ? 'rgba(56,189,248,0.65)' : 'rgba(248,113,113,0.65)'),
+                    borderColor:     oprData.map(v => v >= 0 ? '#38bdf8' : '#f87171'),
+                    borderWidth: 1,
+                    borderRadius: 3,
+                    order: 1,
+                },
+                ...(hasScout ? [{
+                    label: 'Scout EPA vs avg',
+                    data: scoutData,
+                    backgroundColor: scoutData.map(v => v == null ? 'transparent' : v >= 0 ? 'rgba(74,222,128,0.65)' : 'rgba(251,146,60,0.65)'),
+                    borderColor:     scoutData.map(v => v == null ? 'transparent' : v >= 0 ? '#4ade80' : '#fb923c'),
+                    borderWidth: 1,
+                    borderRadius: 3,
+                    order: 1,
+                }] : []),
+                ...(hasStatEv ? [{
+                    label: 'Stat event EPA residual (///)',
+                    data: statEvData,
+                    backgroundColor: statEvData.map(v => v == null ? 'transparent' : v >= 0 ? evPosH : evNegH),
+                    borderColor:     statEvData.map(v => v == null ? 'transparent' : v >= 0 ? '#fbbf24' : '#a78bfa'),
+                    borderWidth: 1,
+                    borderRadius: 3,
+                    order: 1,
+                }] : []),
+                {
+                    label: 'Series avg',
+                    type: 'line',
+                    data: avgData,
+                    showLine: false,
+                    pointStyle: 'line',
+                    pointRadius: 10,
+                    pointBorderWidth: 2.5,
+                    pointBorderColor: '#ffffff',
+                    backgroundColor: 'transparent',
+                    borderColor: 'transparent',
+                    order: 0,
+                },
+            ],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { labels: { color: '#94a3b8', font: { size: 11 }, boxWidth: 12 } },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => {
+                            const v = ctx.raw;
+                            if (v == null) return `${ctx.dataset.label}: N/A`;
+                            return `${ctx.dataset.label}: ${v >= 0 ? '+' : ''}${v.toFixed(1)}`;
+                        },
+                    },
+                },
+            },
+            scales: {
+                x: {
+                    ticks: { color: '#64748b', font: { size: 10 } },
+                    grid:  { color: '#1e293b' },
+                },
+                y: {
+                    ticks: { color: '#64748b', font: { size: 10 } },
+                    grid:  {
+                        color: ctx => ctx.tick.value === 0 ? '#94a3b8' : '#1e293b',
+                        lineWidth: ctx => ctx.tick.value === 0 ? 2 : 1,
+                    },
+                    title: { display: true, text: 'Δ from average', color: '#475569', font: { size: 10 } },
+                },
+            },
+        },
+        plugins: [ignoredColBgPlugin],
+    });
+}
+
 // Merge same-matchNumber rows for one team into averaged/ORed single rows.
 // Returns { rows: deduped[], duplicated: Set<matchNumber> }
 function deduplicateTeamRows(rows) {
@@ -5637,7 +5992,23 @@ async function renderScoutingTab(teamNumber) {
         return;
     }
 
-    const { rows: teamRows, duplicated } = deduplicateTeamRows(rawTeamRows);
+    let { rows: teamRows, duplicated } = deduplicateTeamRows(rawTeamRows);
+
+    // If the user opted to exclude ignored matches from scouting, filter them out.
+    const tbaTeamForFilter = activeTBAData?.teamNumber === teamNumber ? activeTBAData
+        : await db.tbaTeams.get(parseInt(teamNumber));
+    const scoutIgnoreKeys = getTeamIgnoredKeys(tbaTeamForFilter);
+    const scoutIgnoreActive = tbaTeamForFilter?.scoutingIgnoreActive && scoutIgnoreKeys.length > 0;
+    let scoutExcludedCount = 0;
+    if (scoutIgnoreActive) {
+        const tbaMatchesAll = await db.matches.toArray();
+        const ignoredMatchNums = new Set(
+            tbaMatchesAll.filter(m => scoutIgnoreKeys.includes(m.key)).map(m => m.matchNumber)
+        );
+        const before = teamRows.length;
+        teamRows = teamRows.filter(r => !ignoredMatchNums.has(r.matchNumber));
+        scoutExcludedCount = before - teamRows.length;
+    }
 
     const rawStats = config.aggregateTeam(teamRows);
 
@@ -5682,6 +6053,12 @@ async function renderScoutingTab(teamNumber) {
     }
 
     let html = '';
+
+    // Scouting exclusion banner
+    if (scoutIgnoreActive) {
+        html += `<div style="background:#1a1505;border:1px solid #854d0e;border-radius:6px;padding:9px 14px;margin-bottom:12px;font-size:0.8em;color:#fbbf24;">
+            Excluding ${scoutExcludedCount} scouting observation${scoutExcludedCount !== 1 ? 's' : ''} from OPR-ignored match${scoutIgnoreKeys.length !== 1 ? 'es' : ''} · toggle in EPA/OPR tab</div>`;
+    }
 
     // Fusion status banner
     if (fused.available) {
@@ -5907,11 +6284,14 @@ async function renderTBADetail(teamNumber, tbaTeam) {
     const allTeamNums = allTBATeams.map(t => t.teamNumber);
     const oprByTeam = Object.fromEntries(allTBATeams.map(t => [t.teamNumber.toString(), t]));
     const globalIgnored = new Set(allMatches.filter(m => m.globallyIgnored).map(m => m.key));
-    // Base OPR computation excludes globally ignored matches so LOO deltas are self-consistent.
+    // Individual ignores for this team (exclude any that are also globally ignored)
+    const ignoredKeys = new Set(getTeamIgnoredKeys(tbaTeam).filter(k => !globalIgnored.has(k)));
+    // Base OPR computation excludes globally ignored + this team's individually ignored matches.
     const playedMatches = allMatches.filter(m =>
         (m.redScore ?? -1) >= 0 &&
         (m.blueScore ?? -1) >= 0 &&
-        !globalIgnored.has(m.key)
+        !globalIgnored.has(m.key) &&
+        !ignoredKeys.has(m.key)
     );
 
     const teamMatches = allMatches
@@ -5921,13 +6301,13 @@ async function renderTBADetail(teamNumber, tbaTeam) {
         .sort((a, b) => a.matchNumber - b.matchNumber);
 
     // OPR profile stat grid
-    const effectiveOPR = tbaTeam.ignoredMatchKey && tbaTeam.adjustedOPR != null
-        ? tbaTeam.adjustedOPR : tbaTeam.opr;
+    const hasIndivIgnore = ignoredKeys.size > 0 && tbaTeam.adjustedOPR != null;
+    const effectiveOPR = hasIndivIgnore ? tbaTeam.adjustedOPR : tbaTeam.opr;
     oprSection.innerHTML = `
         <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-top:12px;">
             <div style="background:#1a1a1a; padding:12px; border-radius:6px;">
                 <div class="stat-label">OPR</div>
-                <div class="stat-value">${effectiveOPR.toFixed(1)}${tbaTeam.ignoredMatchKey ? '&thinsp;<span style="color:#fbbf24; font-size:0.65em; font-weight:600;">LOO</span>' : ''}</div>
+                <div class="stat-value">${effectiveOPR.toFixed(1)}${hasIndivIgnore ? '&thinsp;<span style="color:#fbbf24; font-size:0.65em; font-weight:600;">LOO</span>' : ''}</div>
             </div>
             <div style="background:#1a1a1a; padding:12px; border-radius:6px;">
                 <div class="stat-label">DPR</div>
@@ -5951,16 +6331,24 @@ async function renderTBADetail(teamNumber, tbaTeam) {
             </div>
         </div>`;
 
-    // Adjustment banner — only when the individually ignored match isn't also globally ignored
-    if (tbaTeam.ignoredMatchKey && !globalIgnored.has(tbaTeam.ignoredMatchKey)) {
-        const ignoredMatch = teamMatches.find(m => m.key === tbaTeam.ignoredMatchKey);
-        const label = ignoredMatch ? `Q${ignoredMatch.matchNumber}` : tbaTeam.ignoredMatchKey;
+    // Adjustment banner — list all individually ignored matches
+    if (hasIndivIgnore) {
+        const labels = [...ignoredKeys].map(k => {
+            const m = teamMatches.find(tm => tm.key === k);
+            return m ? `Q${m.matchNumber}` : k;
+        }).join(', ');
+        const scoutActive = !!tbaTeam.scoutingIgnoreActive;
         oprSection.innerHTML += `
             <div style="margin-top:10px; padding:10px 14px; background:#1a1a1a; border-radius:6px; border-left:3px solid #fbbf24; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-                <span style="color:#fbbf24; font-size:0.85em;">Ignoring <strong>${label}</strong> — LOO OPR: <strong>${tbaTeam.adjustedOPR.toFixed(1)}</strong> (was ${tbaTeam.opr.toFixed(1)})</span>
-                <button onclick="setIgnoredMatch(${teamNumber}, null, null)"
+                <span style="color:#fbbf24; font-size:0.85em;">Ignoring <strong>${labels}</strong> — adjusted OPR: <strong>${tbaTeam.adjustedOPR.toFixed(1)}</strong> (was ${tbaTeam.opr.toFixed(1)})</span>
+                <label style="display:flex;align-items:center;gap:6px;color:#94a3b8;font-size:0.82em;cursor:pointer;margin-left:auto;">
+                    <input type="checkbox" ${scoutActive ? 'checked' : ''} onchange="setScoutingIgnore(${teamNumber}, this.checked)"
+                        style="accent-color:#818cf8;width:14px;height:14px;">
+                    Exclude from scouting tab
+                </label>
+                <button onclick="setIgnoredMatch(${teamNumber}, null)"
                         style="padding:3px 10px; font-size:0.8em; background:#7f1d1d; border:1px solid #ef4444; border-radius:4px; cursor:pointer; color:#fff;">
-                    Clear
+                    Clear all
                 </button>
             </div>`;
     }
@@ -5981,21 +6369,29 @@ async function renderTBADetail(teamNumber, tbaTeam) {
         const score = isRed ? m.redScore : m.blueScore;
         const played = (score ?? -1) >= 0;
         const isGloballyIgnored = globalIgnored.has(m.key);
-        // Only compute OPR columns for matches that are part of the active base.
-        const predicted = !isGloballyIgnored
+        const isIndivIgnored    = ignoredKeys.has(m.key);
+        const isInActiveSet     = played && !isGloballyIgnored && !isIndivIgnored;
+
+        // Residual only for matches in the active base set.
+        const predicted = isInActiveSet
             ? alliance.reduce((s, t) => s + (oprByTeam[String(t)]?.opr || 0), 0)
             : null;
-        const residual = played && !isGloballyIgnored ? score - predicted : null;
+        const residual = isInActiveSet ? score - predicted : null;
 
         let looOPR = null, impact = null;
         if (played && !isGloballyIgnored && baseOPR != null) {
-            const looResult = computeLocalOPR(playedMatches.filter(pm => pm.key !== m.key), allTeamNums);
+            // Active rows: LOO = "OPR if this match were also ignored"
+            // Ignored rows: LOO = "OPR if this match were restored"
+            const subset = isIndivIgnored
+                ? [...playedMatches, m]
+                : playedMatches.filter(pm => pm.key !== m.key);
+            const looResult = computeLocalOPR(subset, allTeamNums);
             if (looResult) {
                 looOPR = looResult[teamIdx];
                 impact = baseOPR - looOPR;
             }
         }
-        return { m, isRed, score, played, isGloballyIgnored, predicted, residual, looOPR, impact };
+        return { m, isRed, score, played, isGloballyIgnored, isIndivIgnored, isInActiveSet, predicted, residual, looOPR, impact };
     });
 
     const fmtSigned = v => v != null ? (v >= 0 ? '+' : '') + v.toFixed(1) : '—';
@@ -6015,8 +6411,8 @@ async function renderTBADetail(teamNumber, tbaTeam) {
             </tr></thead>
             <tbody>
                 ${rows.map(r => {
-        const isGlobal = r.isGloballyIgnored;
-        const isIndivIgnored = !isGlobal && tbaTeam.ignoredMatchKey === r.m.key;
+        const isGlobal       = r.isGloballyIgnored;
+        const isIndivIgnored = r.isIndivIgnored;
         const rowStyle = isGlobal
             ? 'cursor:pointer; opacity:0.4;'
             : isIndivIgnored
@@ -6024,7 +6420,9 @@ async function renderTBADetail(teamNumber, tbaTeam) {
                 : 'cursor:pointer;';
         const matchLabel = isGlobal
             ? `Q${r.m.matchNumber} <span style="color:#f59e0b; font-size:0.7em; font-weight:600;">GLOBAL</span>`
-            : `Q${r.m.matchNumber}`;
+            : isIndivIgnored
+                ? `Q${r.m.matchNumber} <span style="color:#fbbf24; font-size:0.7em; font-weight:600;">IGN</span>`
+                : `Q${r.m.matchNumber}`;
 
         let ignoreBtn = '';
         if (isGlobal) {
@@ -6032,10 +6430,7 @@ async function renderTBADetail(teamNumber, tbaTeam) {
                             style="padding:3px 10px; font-size:0.8em; background:#92400e; border:1px solid #d97706; color:#fde68a; border-radius:4px; cursor:pointer; white-space:nowrap;">
                             Restore Global</button>`;
         } else if (r.played && r.looOPR != null) {
-            const ignoreArgs = isIndivIgnored
-                ? `${teamNumber}, null, null`
-                : `${teamNumber}, '${r.m.key}', ${r.looOPR.toFixed(2)}`;
-            ignoreBtn = `<button onclick="event.stopPropagation();setIgnoredMatch(${ignoreArgs})"
+            ignoreBtn = `<button onclick="event.stopPropagation();setIgnoredMatch(${teamNumber}, '${r.m.key}')"
                             style="padding:3px 10px; font-size:0.8em; background:${isIndivIgnored ? '#92400e' : '#1e293b'}; border:1px solid ${isIndivIgnored ? '#d97706' : '#475569'}; color:${isIndivIgnored ? '#fde68a' : '#94a3b8'}; border-radius:4px; cursor:pointer; white-space:nowrap;">
                             ${isIndivIgnored ? 'Restore' : 'Ignore'}</button>`;
         }
@@ -6045,7 +6440,7 @@ async function renderTBADetail(teamNumber, tbaTeam) {
                         <td><span style="color:${r.isRed ? '#ef4444' : '#3b82f6'}; font-weight:bold;">${r.isRed ? 'Red' : 'Blue'}</span></td>
                         <td>${r.played ? r.score : '—'}</td>
                         <td>${r.predicted != null ? r.predicted.toFixed(1) : '—'}</td>
-                        <td style="color:${resColor(r.residual)}; font-weight:bold;">${r.played && !isGlobal ? fmtSigned(r.residual) : '—'}</td>
+                        <td style="color:${resColor(r.residual)}; font-weight:bold;">${r.isInActiveSet ? fmtSigned(r.residual) : '—'}</td>
                         <td style="color:#94a3b8;">${r.looOPR != null ? r.looOPR.toFixed(1) : '—'}</td>
                         <td style="color:${resColor(r.impact)}; font-weight:bold;">${fmtSigned(r.impact)}</td>
                         <td>${ignoreBtn}</td>
@@ -6055,18 +6450,92 @@ async function renderTBADetail(teamNumber, tbaTeam) {
         </table>`;
 }
 
-window.setIgnoredMatch = async function (teamNumber, matchKey, looOPR) {
-    const pk = parseInt(teamNumber);
-    const updates = matchKey === null
-        ? { ignoredMatchKey: null, adjustedOPR: null }
-        : { ignoredMatchKey: matchKey, adjustedOPR: looOPR };
-    await db.tbaTeams.update(pk, updates);
-    activeTBAData = await db.tbaTeams.get(pk);
+// Returns the array of individually-ignored match keys for a tbaTeam record.
+// Supports both the legacy single-key field and the new array field.
+function getTeamIgnoredKeys(tba) {
+    if (!tba) return [];
+    if (Array.isArray(tba.ignoredMatchKeys)) return tba.ignoredMatchKeys;
+    if (tba.ignoredMatchKey) return [tba.ignoredMatchKey];
+    return [];
+}
+
+// Re-averages a cached fused result excluding specific match numbers.
+// Returns a new result object with recomputed stats, or null if no matches remain.
+function refilteredFusedStats(fusedResult, ignoredMatchNums) {
+    if (!fusedResult?.available || !fusedResult.fusedByMatch) return fusedResult;
+    const filtered = Object.entries(fusedResult.fusedByMatch)
+        .filter(([mn]) => !ignoredMatchNums.has(Number(mn)))
+        .map(([, v]) => v);
+    if (filtered.length === 0) return null;
+    const allKeys = Object.keys(filtered[0] ?? {});
+    const stats = {};
+    for (const key of allKeys) {
+        const vals = filtered.map(f => f[key]).filter(v => v != null);
+        stats[key] = vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+    }
+    return { ...fusedResult, stats };
+}
+
+async function refreshEPADisplays(teamNumber) {
     await Promise.all([
+        displayTeams(),
         displayTBATeams(),
-        renderTBADetail(teamNumber, activeTBAData),
-        activeTeamData ? renderOverview(activeTeamData, activeTBAData) : Promise.resolve(),
+        displayScoutingTeams(),
+        renderAtAGlance(),
+        renderPickList(),
+        renderDraft(),
+        teamNumber != null ? renderTBADetail(String(teamNumber), activeTBAData) : Promise.resolve(),
+        teamNumber != null ? renderScoutingTab(String(teamNumber))               : Promise.resolve(),
+        teamNumber != null && activeTeamData
+            ? renderOverview(activeTeamData, activeTBAData) : Promise.resolve(),
     ]);
+}
+
+// Toggle a match key in/out of a team's individual ignore list.
+// matchKey === null clears all ignored keys.
+window.setIgnoredMatch = async function (teamNumber, matchKey) {
+    const pk = parseInt(teamNumber);
+    const current = await db.tbaTeams.get(pk);
+    let keys = getTeamIgnoredKeys(current);
+
+    if (matchKey === null) {
+        keys = [];
+    } else if (keys.includes(matchKey)) {
+        keys = keys.filter(k => k !== matchKey);
+    } else {
+        keys = [...keys, matchKey];
+    }
+
+    let adjustedOPR = null;
+    if (keys.length > 0) {
+        const allTBATeams = await db.tbaTeams.toArray();
+        const allMatches  = await db.matches.toArray();
+        const allTeamNums = allTBATeams.map(t => t.teamNumber);
+        const globalIgnored = new Set(allMatches.filter(m => m.globallyIgnored).map(m => m.key));
+        const keySet = new Set(keys);
+        const subset = allMatches.filter(m =>
+            (m.redScore ?? -1) >= 0 && (m.blueScore ?? -1) >= 0 &&
+            !globalIgnored.has(m.key) && !keySet.has(m.key)
+        );
+        const result = computeLocalOPR(subset, allTeamNums);
+        const idx = allTeamNums.findIndex(n => n === pk);
+        if (result && idx !== -1) adjustedOPR = result[idx];
+    }
+
+    await db.tbaTeams.update(pk, {
+        ignoredMatchKeys: keys.length > 0 ? keys : null,
+        ignoredMatchKey:  null,
+        adjustedOPR:      keys.length > 0 ? adjustedOPR : null,
+    });
+    activeTBAData = await db.tbaTeams.get(pk);
+    await refreshEPADisplays(teamNumber);
+};
+
+window.setScoutingIgnore = async function (teamNumber, active) {
+    const pk = parseInt(teamNumber);
+    await db.tbaTeams.update(pk, { scoutingIgnoreActive: active || null });
+    activeTBAData = await db.tbaTeams.get(pk);
+    await refreshEPADisplays(teamNumber);
 };
 
 function renderChart(team) {
