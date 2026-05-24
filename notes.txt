@@ -3,16 +3,26 @@ Scouting App To-do
 - Password protect?
 
 ------- GENERAL
-- If on overview and click another team number, stay on overview!! Way more valuable with match info
-- Match predictions
-- Alliance predictions
-- Link to livestream
+D - Link to livestream (TBA/Stat pages at least)
+D - Team match chart links to match details
+D - Mobile team performance table doesn't scroll sideways... might need to?
+D - Table with RP in match detail goes outside the bounding box...
+D - Scouting table in team overview doesn't update with match ignore?
+D - If on overview and click another team number, stay on overview!! Way more valuable with match info
+D - Clear match/pit scouting data separately? Single clear data button.
+D - Export/import notes &/or configuration... probably separately? Ask if any better sharing options.
+
+
+- Match predictions / strategy??
+- Alliance predictions - points range in elim matches
 - Compare teams page?
+- Schedule predictions, high-entropy remaining matches
+
+
+
 
 ------- YEAR SPECIFIC
 2025 - Table for auto/tele coral/algae in team scouting tab. Add tier badges to each value. Remove touched/tipped/defended. Died becomes x/y, add Endgame state in x/y format. Consolidate chicklets up top of table?
 2025 - Dashboard & match prep & pick list should really have component information, not mixed EPAs.... Customize per year. 2025 should be coral (L1-L4), algae, climb? 2026 should be auto EPA/type, total EPA, shuttling, defense skill?
 2025 - Maybe dashboard has a toggle for EPAs vs. components?
-
-
 

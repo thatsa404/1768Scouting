@@ -459,4 +459,15 @@ export default {
         { label: 'Offense Skill', key: 'avgOffense', decimals: 1 },
         { label: 'Defense Skill', key: 'avgDefense', decimals: 1 },
     ],
+
+    // ── Match detail breakdown ────────────────────────────────────────────────
+    matchBreakdown: {
+        scoreRows: (rbd, bbd) => [
+            ['Auto',         rbd.totalAutoPoints,    bbd.totalAutoPoints],
+            ['Teleop',       rbd.totalTeleopPoints,  bbd.totalTeleopPoints],
+            ['Endgame',      rbd.endGameBargePoints, bbd.endGameBargePoints],
+            ['Fouls Earned', rbd.foulPoints,         bbd.foulPoints],
+        ],
+        bonusRPFields: [],
+    },
 };

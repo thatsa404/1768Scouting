@@ -806,4 +806,20 @@ export default {
         { label: 'Passing Skill',  key: 'avgPassingSkill', decimals: 1 },
         { label: 'Defense Skill',  key: 'avgDefenseSkill', decimals: 1 },
     ],
+
+    // ── Match detail breakdown ────────────────────────────────────────────────
+    matchBreakdown: {
+        scoreRows: (rbd, bbd) => [
+            ['Auto',         rbd.totalAutoPoints,  bbd.totalAutoPoints],
+            ['Teleop',       rbd.totalTeleopPoints, bbd.totalTeleopPoints],
+            ['Endgame',      (rbd.hubScore?.endgamePoints || 0) + (rbd.endGameTowerPoints || 0),
+                             (bbd.hubScore?.endgamePoints || 0) + (bbd.endGameTowerPoints || 0)],
+            ['Fouls Earned', rbd.foulPoints,        bbd.foulPoints],
+        ],
+        bonusRPFields: [
+            { label: 'Energized RP',    field: 'energizedAchieved' },
+            { label: 'Supercharged RP', field: 'superchargedAchieved' },
+            { label: 'Traversal RP',    field: 'traversalAchieved' },
+        ],
+    },
 };

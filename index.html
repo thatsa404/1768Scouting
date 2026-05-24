@@ -957,11 +957,10 @@
             right: 0 !important;
             width: 50vw !important;
             height: 100vh !important;
+            box-sizing: border-box !important;
             background: #080d16 !important;
             border-left: 2px solid #1e293b !important;
             padding: 24px !important;
-            justify-content: flex-start !important;
-            align-items: stretch !important;
             overflow-x: hidden !important;
             overflow-y: auto !important;
             z-index: 60 !important;
@@ -981,14 +980,19 @@
             z-index: 60 !important;
             box-sizing: border-box !important;
         }
+        #matchDetailView .modal-content {
+            background: transparent;
+            border: none;
+            border-radius: 0;
+            box-shadow: none;
+            width: 100%;
+            max-width: 680px;
+            padding: 24px;
+            box-sizing: border-box;
+        }
         body.split-ui #matchDetailView .modal-content {
-            background: transparent !important;
-            border-radius: 0 !important;
-            padding: 14px 18px !important;
-            width: 100% !important;
             max-width: none !important;
-            box-shadow: none !important;
-            box-sizing: border-box !important;
+            padding: 0 !important;
         }
 
         /* ─── Split mode: compact left-panel density ─── */
@@ -1002,7 +1006,7 @@
         /* Compact nav tabs */
         body.split-ui .top-nav { margin-bottom: 8px; padding-bottom: 6px; }
         body.split-ui .nav-btn { font-size: 1rem; padding: 9px 16px; border-radius: 8px; }
-        /* Compact sub-tabs (Home/Analysis/Tools inner tabs) */
+        /* Compact sub-tabs (Home/Data/Tools inner tabs) */
         body.split-ui .detail-tab-btn { font-size: 1rem; padding: 9px 14px; }
         /* Tighten view headings */
         body.split-ui h2 { font-size: 1.35rem; margin-bottom: 0.5rem; }
@@ -1044,7 +1048,7 @@
     <nav class="top-nav">
         <button class="nav-btn active" data-view="homeView" onclick="switchView('homeView')"><svg viewBox="0 0 20 20" fill="currentColor" style="width:1em;height:1em;vertical-align:-0.15em;margin-right:6px;"><path fill-rule="evenodd" d="M9.293 2.293a1 1 0 0 1 1.414 0l7 7A1 1 0 0 1 17 11h-1v6a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1v-3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-6H3a1 1 0 0 1-.707-1.707l7-7Z" clip-rule="evenodd"/></svg>Home</button>
         <button class="nav-btn" data-view="scheduleView" onclick="switchView('scheduleView')"><svg viewBox="0 0 20 20" fill="currentColor" style="width:1em;height:1em;vertical-align:-0.15em;margin-right:6px;"><path fill-rule="evenodd" d="M5.75 2a.75.75 0 0 1 .75.75V4h7V2.75a.75.75 0 0 1 1.5 0V4h.25A2.75 2.75 0 0 1 18 6.75v8.5A2.75 2.75 0 0 1 15.25 18H4.75A2.75 2.75 0 0 1 2 15.25v-8.5A2.75 2.75 0 0 1 4.75 4H5V2.75A.75.75 0 0 1 5.75 2Zm-1 5.5c-.69 0-1.25.56-1.25 1.25v6.5c0 .69.56 1.25 1.25 1.25h10.5c.69 0 1.25-.56 1.25-1.25v-6.5c0-.69-.56-1.25-1.25-1.25H4.75Z" clip-rule="evenodd"/></svg>Schedule</button>
-        <button class="nav-btn" data-view="analysisView" onclick="switchView('analysisView')"><svg viewBox="0 0 20 20" fill="currentColor" style="width:1em;height:1em;vertical-align:-0.15em;margin-right:6px;"><path d="M15.5 2A1.5 1.5 0 0 0 14 3.5v13a1.5 1.5 0 0 0 3 0v-13A1.5 1.5 0 0 0 15.5 2ZM10.5 6A1.5 1.5 0 0 0 9 7.5v9a1.5 1.5 0 0 0 3 0v-9A1.5 1.5 0 0 0 10.5 6ZM5.5 10A1.5 1.5 0 0 0 4 11.5v5a1.5 1.5 0 0 0 3 0v-5A1.5 1.5 0 0 0 5.5 10Z"/></svg>Analysis</button>
+        <button class="nav-btn" data-view="dataView" onclick="switchView('dataView')"><svg viewBox="0 0 20 20" fill="currentColor" style="width:1em;height:1em;vertical-align:-0.15em;margin-right:6px;"><path d="M15.5 2A1.5 1.5 0 0 0 14 3.5v13a1.5 1.5 0 0 0 3 0v-13A1.5 1.5 0 0 0 15.5 2ZM10.5 6A1.5 1.5 0 0 0 9 7.5v9a1.5 1.5 0 0 0 3 0v-9A1.5 1.5 0 0 0 10.5 6ZM5.5 10A1.5 1.5 0 0 0 4 11.5v5a1.5 1.5 0 0 0 3 0v-5A1.5 1.5 0 0 0 5.5 10Z"/></svg>Data</button>
         <button class="nav-btn" data-view="toolsView" onclick="switchView('toolsView')"><svg viewBox="0 0 20 20" fill="currentColor" style="width:1em;height:1em;vertical-align:-0.15em;margin-right:6px;"><path fill-rule="evenodd" d="M19 5.5a4.5 4.5 0 0 1-4.791 4.49c-.873-.055-1.808.128-2.368.8l-6.024 7.23a2.724 2.724 0 1 1-3.837-3.837L9.21 8.16c.672-.56.855-1.495.8-2.368a4.5 4.5 0 0 1 5.873-4.575c.324.105.39.51.15.749L13.34 4.65a.836.836 0 0 0-.063 1.155 5.98 5.98 0 0 0 .897.74c.281.187.611.22.907.104l2.285-.95c.293-.12.63.025.72.324.102.344.154.706.154 1.077ZM3.75 16a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z" clip-rule="evenodd"/></svg>Tools</button>
     </nav>
 
@@ -1211,20 +1215,38 @@
                     style="width:0%;height:10px;background:#3b82f6;border-radius:4px;transition:width 0.2s;"></div>
             </div>
 
-            <div style="margin-top:24px;padding-top:16px;border-top:1px solid #1e293b;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-                <button onclick="saveScoutingArchive()" style="background:#1e293b;color:#60a5fa;border:1px solid #60a5fa;">↓ Save Event Archive</button>
-                <button onclick="clearCache()" style="background:#1e293b;color:#ef4444;border:1px solid #ef4444;">Clear API Data</button>
-                <button onclick="clearEvent()" style="background:#1e293b;color:#ef4444;border:1px solid #ef4444;">Clear Event</button>
+            <input type="file" id="adjImportInput" accept=".json" style="display:none" onchange="importAdjFile(this)">
+            <div style="margin-top:24px;padding-top:16px;border-top:1px solid #1e293b;display:flex;flex-direction:column;gap:10px;">
+                <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                    <span style="color:#94a3b8;font-size:0.75em;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap;">Share Adj</span>
+                    <button id="shareAdjLinkBtn" onclick="shareAdjLink()" style="background:#1e293b;color:#34d399;border:1px solid #34d399;">⬡ Copy Link</button>
+                    <button onclick="exportAdjBundle()" style="background:#1e293b;color:#60a5fa;border:1px solid #60a5fa;">↓ Export Adj</button>
+                    <button onclick="document.getElementById('adjImportInput').click()" style="background:#1e293b;color:#60a5fa;border:1px solid #60a5fa;">↑ Import Adj</button>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                    <button onclick="saveScoutingArchive()" style="background:#1e293b;color:#60a5fa;border:1px solid #60a5fa;">↓ Save Event Archive</button>
+                    <button onclick="clearCache()" style="background:#1e293b;color:#ef4444;border:1px solid #ef4444;">Clear API Data</button>
+                    <button onclick="clearScouting()" style="background:#1e293b;color:#ef4444;border:1px solid #ef4444;">Clear Scouting</button>
+                    <button onclick="clearEvent()" style="background:#1e293b;color:#ef4444;border:1px solid #ef4444;">Clear Event</button>
+                </div>
             </div>
             </div><!-- end z-index wrapper -->
         </div>
 
         <div id="home-tab-overview" style="display:none;">
+            <div id="dashboardEventLinks" style="display:none;gap:16px;flex-wrap:wrap;margin-bottom:10px;">
+                <a id="dashboardTBALink" href="#" target="_blank"
+                    style="color:#3b82f6;text-decoration:none;font-size:0.9em;display:inline-flex;align-items:center;gap:4px;">
+                    <img src="tba.png" class="source-logo" style="margin:0;">View on TBA ↗</a>
+                <a id="dashboardStatboticsLink" href="#" target="_blank"
+                    style="color:#3b82f6;text-decoration:none;font-size:0.9em;display:inline-flex;align-items:center;gap:4px;">
+                    <img src="statbotics.ico" class="source-logo" style="margin:0;">View on Statbotics ↗</a>
+            </div>
             <div style="display:flex; gap:6px; margin-bottom:10px; justify-content:flex-end; align-items:center;">
                 <button id="dashboardCondenseBtn" onclick="toggleDashboardCondense()"
                     style="background:transparent;color:#64748b;border:1px solid #334155;border-radius:5px;padding:3px 10px;font-size:0.72em;font-weight:600;cursor:pointer;">
                     Expand</button>
-                <button id="dashboardChartToggleBtn" onclick="toggleAnalysisChart()"
+                <button id="dashboardChartToggleBtn" onclick="toggleDataChart()"
                     style="background:transparent;color:#64748b;border:1px solid #334155;border-radius:5px;padding:3px 10px;font-size:0.72em;font-weight:600;cursor:pointer;">
                     Hide Chart</button>
             </div>
@@ -1299,18 +1321,18 @@
         </div>
     </div>
 
-    <div id="analysisView" class="app-view" style="display: none;">
-        <div class="detail-tabs" id="analysisTabs" style="margin-top:0; margin-bottom:12px;">
-            <button class="detail-tab-btn active" onclick="switchAnalysisTab('statbotics')"><img src="statbotics.ico" class="source-logo">Statbotics</button>
-            <button class="detail-tab-btn" onclick="switchAnalysisTab('tba')"><img src="tba.png" class="source-logo">TBA</button>
-            <button class="detail-tab-btn" onclick="switchAnalysisTab('scouting')"><img src="sheets.png" class="source-logo">Scouting</button>
-            <button class="detail-tab-btn" onclick="switchAnalysisTab('algorithms')">Algorithms</button>
-            <button id="analysisChartToggleBtn" onclick="toggleAnalysisChart()"
+    <div id="dataView" class="app-view" style="display: none;">
+        <div class="detail-tabs" id="dataTabs" style="margin-top:0; margin-bottom:12px;">
+            <button class="detail-tab-btn active" onclick="switchDataTab('statbotics')"><img src="statbotics.ico" class="source-logo">Statbotics</button>
+            <button class="detail-tab-btn" onclick="switchDataTab('tba')"><img src="tba.png" class="source-logo">TBA</button>
+            <button class="detail-tab-btn" onclick="switchDataTab('scouting')"><img src="sheets.png" class="source-logo">Scouting</button>
+            <button class="detail-tab-btn" onclick="switchDataTab('algorithms')">Algorithms</button>
+            <button id="dataChartToggleBtn" onclick="toggleDataChart()"
                 style="margin-left:auto;background:transparent;color:#64748b;border:1px solid #334155;border-radius:5px;padding:3px 10px;font-size:0.72em;font-weight:600;cursor:pointer;">
                 Hide Chart</button>
         </div>
 
-        <div id="analysis-tab-statbotics">
+        <div id="data-tab-statbotics">
             <div id="statboticsChartContainer" class="chart-container-main">
                 <canvas id="teamComparisonChart"></canvas>
             </div>
@@ -1332,7 +1354,7 @@
             </div>
         </div>
 
-        <div id="analysis-tab-tba" style="display:none;">
+        <div id="data-tab-tba" style="display:none;">
             <div class="detail-tabs" id="tbaTabs"
                 style="margin-top:0; margin-bottom:16px; border-bottom:1px solid #1e293b; padding-bottom:4px;">
                 <button class="detail-tab-btn active" onclick="switchTBATab('teams')">Teams</button>
@@ -1395,7 +1417,7 @@
             </div>
         </div>
 
-        <div id="analysis-tab-scouting" style="display:none;">
+        <div id="data-tab-scouting" style="display:none;">
             <div style="margin-bottom:8px;">
                 <span id="scouting-fusion-status" style="color:#64748b;font-size:0.78em;"></span>
             </div>
@@ -1435,7 +1457,7 @@
             </div>
         </div>
 
-        <div id="analysis-tab-algorithms" style="display:none; max-width:860px; padding-bottom:40px;">
+        <div id="data-tab-algorithms" style="display:none; max-width:860px; padding-bottom:40px;">
 
             <!-- Intro -->
             <p style="color:#94a3b8; font-size:0.92em; line-height:1.65; margin:0 0 28px;">
@@ -1852,9 +1874,9 @@
 
     <div id="matchDetailView" class="modal-overlay" style="display: none;">
         <div class="modal-content">
-            <div class="modal-header">
+            <div class="view-header-container">
                 <h2 id="matchDetailLabel">Match Details</h2>
-                <button onclick="closeMatchDetail()" class="close-btn">×</button>
+                <button onclick="closeMatchDetail()" class="nav-btn">Close</button>
             </div>
 
             <div class="match-comparison-container">
@@ -1895,9 +1917,9 @@
             <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.75 2a.75.75 0 0 1 .75.75V4h7V2.75a.75.75 0 0 1 1.5 0V4h.25A2.75 2.75 0 0 1 18 6.75v8.5A2.75 2.75 0 0 1 15.25 18H4.75A2.75 2.75 0 0 1 2 15.25v-8.5A2.75 2.75 0 0 1 4.75 4H5V2.75A.75.75 0 0 1 5.75 2Zm-1 5.5c-.69 0-1.25.56-1.25 1.25v6.5c0 .69.56 1.25 1.25 1.25h10.5c.69 0 1.25-.56 1.25-1.25v-6.5c0-.69-.56-1.25-1.25-1.25H4.75Z" clip-rule="evenodd"/></svg>
             Schedule
         </button>
-        <button class="mobile-nav-item" data-view="analysisView" onclick="switchView('analysisView')">
+        <button class="mobile-nav-item" data-view="dataView" onclick="switchView('dataView')">
             <svg viewBox="0 0 20 20" fill="currentColor"><path d="M15.5 2A1.5 1.5 0 0 0 14 3.5v13a1.5 1.5 0 0 0 3 0v-13A1.5 1.5 0 0 0 15.5 2ZM10.5 6A1.5 1.5 0 0 0 9 7.5v9a1.5 1.5 0 0 0 3 0v-9A1.5 1.5 0 0 0 10.5 6ZM5.5 10A1.5 1.5 0 0 0 4 11.5v5a1.5 1.5 0 0 0 3 0v-5A1.5 1.5 0 0 0 5.5 10Z"/></svg>
-            Analysis
+            Data
         </button>
         <button class="mobile-nav-item" data-view="toolsView" onclick="switchView('toolsView')">
             <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M19 5.5a4.5 4.5 0 0 1-4.791 4.49c-.873-.055-1.808.128-2.368.8l-6.024 7.23a2.724 2.724 0 1 1-3.837-3.837L9.21 8.16c.672-.56.855-1.495.8-2.368a4.5 4.5 0 0 1 5.873-4.575c.324.105.39.51.15.749L13.34 4.65a.836.836 0 0 0-.063 1.155 5.98 5.98 0 0 0 .897.74c.281.187.611.22.907.104l2.285-.95c.293-.12.63.025.72.324.102.344.154.706.154 1.077ZM3.75 16a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z" clip-rule="evenodd"/></svg>
@@ -1905,6 +1927,7 @@
         </button>
     </nav>
 
+    <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
     <script type="module" src="main.js"></script>
 </body>
 
