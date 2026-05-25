@@ -1057,6 +1057,8 @@ window.highlightTeam = function (teamNumber) {
     if (window.currentFocusedTeam === teamNumber.toString()) {
         window.currentFocusedTeam = null;
         window.refreshPrepHighlight(); // Keep these in sync
+        watchListDirty = true;
+        if (document.getElementById('schedule-sub-watchlist')?.style.display !== 'none') renderWatchList();
         return;
     }
 
@@ -1075,6 +1077,8 @@ window.highlightTeam = function (teamNumber) {
     // 4. Update the Prep cards if they are currently visible
     window.refreshPrepHighlight();
     applyScheduleFilter();
+    watchListDirty = true;
+    if (document.getElementById('schedule-sub-watchlist')?.style.display !== 'none') renderWatchList();
 };
 
 window.refreshPrepHighlight = function () {
@@ -1171,7 +1175,7 @@ async function processTeamPerformance(teamNumber, eventKey, force = false, teamE
             autoEPA,
             teleopEPA,
             endgameEPA,
-            ...(evEPA ? { eventEPA: evEPA } : {}),
+            epa: evEPA ?? summary.epa ?? null,
         });
         console.log(`-> Skipping deep dive for ${teamNumber}, but updated summary stats.`);
         return null;
@@ -1199,7 +1203,7 @@ async function processTeamPerformance(teamNumber, eventKey, force = false, teamE
         autoEPA,
         teleopEPA,
         endgameEPA,
-        eventEPA: evEPA,
+        epa: evEPA ?? summary.epa ?? null,
         rawStatboticsData: fullMatchData,
         analysis: cachedTeam?.analysis || null,
         lastUpdated: Date.now(),
@@ -1330,6 +1334,34 @@ window.syncStatboticsLive = async function () {
     const allTeams = await db.teams.toArray();
     let updated = 0;
 
+    // Create records for teams not yet in db — allows live-only sync without history sync
+    const existingNums = new Set(allTeams.map(t => t.teamNumber));
+    const toCreate = [];
+    for (const [tnStr, matches] of Object.entries(byTeam)) {
+        const tn = parseInt(tnStr);
+        if (existingNums.has(tn)) continue;
+        const teData = teamEvMap[tn];
+        const evEPA  = teData?.epa ?? null;
+        const teBd   = evEPA?.breakdown ?? null;
+        const played = matches.filter(m => m.status === 'Completed' && m.epa?.post != null);
+        const latestEPA = played.length ? played[played.length - 1].epa.post
+                        : (evEPA?.total_points?.mean ?? null);
+        toCreate.push({
+            teamNumber:  tn,
+            teamName:    `Team ${tn}`,
+            eventKey,
+            currentEPA:  latestEPA,
+            autoEPA:     teBd?.auto_points    ?? null,
+            teleopEPA:   teBd?.teleop_points  ?? null,
+            endgameEPA:  teBd?.endgame_points ?? null,
+            epa:         evEPA,
+            rawStatboticsData: matches,
+            lastUpdated: Date.now(),
+        });
+        updated++;
+    }
+    if (toCreate.length) await db.teams.bulkPut(toCreate);
+
     for (const team of allTeams) {
         const tn = team.teamNumber;
         const newMatches = byTeam[tn];
@@ -1356,7 +1388,7 @@ window.syncStatboticsLive = async function () {
                 autoEPA:    teBd?.auto_points    ?? team.autoEPA,
                 teleopEPA:  teBd?.teleop_points  ?? team.teleopEPA,
                 endgameEPA: teBd?.endgame_points ?? team.endgameEPA,
-                eventEPA:   evEPA,
+                epa:        evEPA,
             } : {}),
         });
         updated++;
@@ -1523,6 +1555,12 @@ async function importArchiveBundle(data, eventKey) {
                 return { captain: strip(0), pick1: strip(1), pick2: strip(2) };
             });
             localStorage.setItem('realDraftState', JSON.stringify({ alliances, currentAlliance: 8, currentRound: 2 }));
+        }
+        if (typeof data.calibrationBeta === 'number' && !isNaN(data.calibrationBeta)) {
+            localStorage.setItem(`wlCalibrationBeta_${eventKey}`, String(data.calibrationBeta));
+        }
+        if (data.preEventSnapshot) {
+            localStorage.setItem(`wlPreEventSnapshot_${data.eventKey}`, JSON.stringify(data.preEventSnapshot));
         }
         return `Archive loaded: ${data.scoutingRows.length} rows + ${data.teams?.length || 0} teams + ${data.matches?.length || 0} matches`;
     } else {
@@ -1776,6 +1814,7 @@ window.saveScoutingArchive = async function () {
 
     const pitRaw = localStorage.getItem(`pitData_${eventKey}`);
     const allianceRaw = localStorage.getItem(`tbaAlliances_${eventKey}`);
+    const savedBeta = parseFloat(localStorage.getItem(`wlCalibrationBeta_${eventKey}`));
     const bundle = {
         eventKey,
         archived: new Date().toISOString(),
@@ -1785,6 +1824,8 @@ window.saveScoutingArchive = async function () {
         tbaTeams,
         matches,
         tbaAlliances: allianceRaw ? JSON.parse(allianceRaw) : null,
+        calibrationBeta: isNaN(savedBeta) ? null : savedBeta,
+        preEventSnapshot: JSON.parse(localStorage.getItem(`wlPreEventSnapshot_${eventKey}`) ?? 'null'),
     };
 
     const a = document.createElement('a');
@@ -2774,6 +2815,7 @@ window.syncTBAMatches = async function () {
         await db.matches.bulkPut(records);
 
         setSyncTimestamp('tbaMatches');
+        watchListDirty = true;
         statusDiv.innerText = `✅ TBA Matches synced (${records.length} qual matches).`;
     } catch (err) {
         console.error(err);
@@ -3069,7 +3111,7 @@ async function renderAtAGlance() {
     ]);
 
     if (!allTeams.length) {
-        statusEl.textContent = 'No team data — sync Statbotics first.';
+        statusEl.textContent = 'No team data — sync Statbotics (History or Live) first.';
         table.style.display = 'none';
         return;
     }
@@ -3305,14 +3347,18 @@ window.switchTBATab = function (tab) {
 // Returns [{m, influence, isIgnored}] for every played match.
 // influence = Σ|ΔOPR| across all teams when this match is removed (or added back if ignored).
 async function computeMatchInfluences() {
-    const allTBATeams = await db.tbaTeams.toArray();
     const allMatches = await db.matches.toArray();
-    if (!allTBATeams.length) return null;
-
-    const allTeamNums = allTBATeams.map(t => t.teamNumber);
     const globalIgnored = new Set(allMatches.filter(m => m.globallyIgnored).map(m => m.key));
     const allPlayed = allMatches.filter(m => (m.redScore ?? -1) >= 0 && (m.blueScore ?? -1) >= 0);
     const activePlayed = allPlayed.filter(m => !globalIgnored.has(m.key));
+
+    if (!activePlayed.length) return null;
+
+    // Use only teams from active played matches — allows OPR to be solved for early-event
+    // states where far fewer than all registered teams have appeared on the field.
+    const allTeamNums = [...new Set(
+        activePlayed.flatMap(m => [...(m.red ?? []), ...(m.blue ?? [])]).map(Number)
+    )];
 
     const baseOPRs = computeLocalOPR(activePlayed, allTeamNums);
     if (!baseOPRs) return null;
@@ -3598,6 +3644,1185 @@ window.toggleScheduleFilter = function () {
     window.scheduleFilterActive = !window.scheduleFilterActive;
     document.getElementById('scheduleFilterBtn')?.classList.toggle('active', window.scheduleFilterActive);
     applyScheduleFilter();
+};
+
+// ── SCHEDULE SUB-TABS ────────────────────────────────────────────────────────
+
+let watchListDirty = true;
+let watchListCutoff = null;   // null = live mode; integer = treat matches > N as unplayed
+let wlYourCollapsed = false;
+let wlOtherCollapsed = false;
+let wlStandingsCollapsed = false;
+let wlDetailCache = null;
+let wlPreEventCache = null;
+// Linear calibration factor: p_cal = 0.5 + wlCalibrationBeta*(p - 0.5).
+// 1.0 = no correction; <1.0 = shrink toward 50% (fixes overconfidence).
+// Set by runBacktest → applyWLCalibration(), resets to 1.0 on page load.
+let wlCalibrationBeta = 1.0;
+
+window.switchScheduleTab = function (tab) {
+    ['matches', 'watchlist'].forEach(t => {
+        document.getElementById(`schedule-sub-${t}`).style.display = t === tab ? '' : 'none';
+    });
+    document.querySelectorAll('#scheduleTabs .detail-tab-btn').forEach((btn, i) => {
+        btn.classList.toggle('active', ['matches', 'watchlist'][i] === tab);
+    });
+    if (tab === 'watchlist' && watchListDirty) renderWatchList();
+};
+
+// ── WATCH LIST ENGINE ────────────────────────────────────────────────────────
+
+// Merge saved per-event threshold overrides onto game config defaults.
+function getEffectiveThresholds(gameConfig, eventKey) {
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(`rpThresholds_${eventKey}`) || '{}'); } catch {}
+    return (gameConfig?.rpThresholds ?? []).map(rpt => ({
+        ...rpt,
+        threshold: saved[rpt.rpField] != null ? Number(saved[rpt.rpField]) : rpt.threshold,
+    }));
+}
+
+// Average OPR across all known teams; used when a team has no OPR.
+function wlEventAvgOPR(tbaMap) {
+    const vals = Object.values(tbaMap).map(t => t.opr).filter(v => v != null && v > 0);
+    return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : 30;
+}
+
+// Best available single-number contribution estimate for one team.
+// oprWeight (0–1) blends EPA→OPR as more matches are played; both are used when available.
+// Adjusted OPR (for teams with individually ignored matches) always takes priority.
+function wlPredictedContribution(tn, tbaMap, teamsMap, avg, oprWeight = 1) {
+    const tba    = tbaMap[parseInt(tn)];
+    const stat   = teamsMap[parseInt(tn)];
+    const hasAdj = tba && getTeamIgnoredKeys(tba).length > 0 && tba.adjustedOPR != null;
+    if (hasAdj) return tba.adjustedOPR;
+    const opr = tba?.opr   ?? null;
+    const epa = stat?.currentEPA ?? null;
+    if (opr != null && epa != null) return oprWeight * opr + (1 - oprWeight) * epa;
+    return opr ?? epa ?? avg;
+}
+
+function wlAlliancePredictedScore(teams, tbaMap, teamsMap, avg, oprWeight = 1) {
+    return (teams ?? []).reduce((s, tn) => s + (wlPredictedContribution(tn, tbaMap, teamsMap, avg, oprWeight) ?? avg), 0);
+}
+
+// Box-Muller standard normal sample.
+function wlGaussian() {
+    return Math.sqrt(-2 * Math.log(Math.random())) * Math.cos(2 * Math.PI * Math.random());
+}
+
+// Gaussian prior σ as a fraction of predicted score, derived from per-team EPA standard deviations.
+// Assumes team scoring contributions are independent: σ_alliance = √(σ₁² + σ₂² + σ₃²).
+function wlAllianceSigmaRel(teams, teamsMap, predicted) {
+    let sumSq = 0, found = 0;
+    for (const tn of (teams ?? [])) {
+        const sd = teamsMap[parseInt(tn)]?.epa?.total_points?.sd;
+        if (sd != null) { sumSq += sd * sd; found++; }
+    }
+    if (!found || predicted <= 0) return 0.18;  // flat 18% CV if no EPA SDs available
+    return Math.sqrt(sumSq) / predicted;
+}
+
+// Blended residual pool: empirical relative residuals + N_PRIOR synthetic Gaussian draws.
+// Prior weight = 10 / (empirical_count + 10), shrinking as real data accumulates.
+function wlBuildRelPool(relResiduals, teams, teamsMap, predicted) {
+    const N_PRIOR  = 10;
+    const sigmaRel = wlAllianceSigmaRel(teams, teamsMap, predicted);
+    const prior    = Array.from({ length: N_PRIOR }, () => sigmaRel * wlGaussian());
+    return [...relResiduals, ...prior];
+}
+
+// Differential pool: empirical margin residuals + Gaussian prior for the predicted margin.
+// σ_diff = √(σ_red_abs² + σ_blue_abs²) where σ_x_abs = σ_x_rel × predicted_x.
+// Sampling from this pool for win probability captures shared match-level noise (both alliances
+// affected by field conditions, refs, etc.), preventing probabilities from reaching 100%/0%.
+function wlBuildDiffPool(diffResiduals, redTeams, blueTeams, teamsMap, redPred, bluePred) {
+    const N_PRIOR   = 10;
+    const sigmaRed  = wlAllianceSigmaRel(redTeams,  teamsMap, redPred)  * redPred;
+    const sigmaBlue = wlAllianceSigmaRel(blueTeams, teamsMap, bluePred) * bluePred;
+    const sigmaDiff = Math.sqrt(sigmaRed * sigmaRed + sigmaBlue * sigmaBlue);
+    const prior = Array.from({ length: N_PRIOR }, () => sigmaDiff * wlGaussian());
+    return [...diffResiduals, ...prior];
+}
+
+// Relative residuals: (actualScore − predicted) / predicted, one per alliance per played match.
+// Differential residuals: (actualRed − actualBlue) − (predRed − predBlue), in absolute points.
+// oprWeight at match i uses the count of matches played *before* match i, so residuals are
+// computed with the same blend the model would have used when predicting that match.
+function wlCollectResiduals(playedMatches, tbaMap, teamsMap) {
+    const avg = wlEventAvgOPR(tbaMap);
+    const relRes  = [];
+    const diffRes = [];
+    for (let i = 0; i < playedMatches.length; i++) {
+        const m = playedMatches[i];
+        if ((m.redScore ?? -1) < 0) continue;
+        const oprWeight = Math.min(1, i / 30);   // weight at time of this match
+        const rp = wlAlliancePredictedScore(m.red,  tbaMap, teamsMap, avg, oprWeight);
+        const bp = wlAlliancePredictedScore(m.blue, tbaMap, teamsMap, avg, oprWeight);
+        if (rp > 0) relRes.push((m.redScore  - rp) / rp);
+        if (bp > 0) relRes.push((m.blueScore - bp) / bp);
+        // Absolute differential residual — captures match-level shared noise.
+        diffRes.push((m.redScore - m.blueScore) - (rp - bp));
+    }
+    return { relResiduals: relRes, diffResiduals: diffRes };
+}
+
+// Solve a fuel-specific OPR using computeLocalOPR on component scores instead of total scores.
+// Falls back to a reduced team set (only teams seen in fuel matches) when the full matrix is
+// underdetermined — e.g. early in an event or when using the debug cutoff control.
+function wlComputeFuelOPR(playedMatches, allTeamNums, scoreComponent, gameConfig) {
+    if (!gameConfig?.componentScores) return null;
+    const fuelMs = playedMatches.map(m => {
+        const rf = gameConfig.componentScores(m.redBreakdown)?.[scoreComponent];
+        const bf = gameConfig.componentScores(m.blueBreakdown)?.[scoreComponent];
+        return (rf != null && bf != null) ? { ...m, redScore: rf, blueScore: bf } : null;
+    }).filter(Boolean);
+    if (fuelMs.length < 2) return null;
+
+    let result = computeLocalOPR(fuelMs, allTeamNums);
+    if (result) return result;
+
+    // Underdetermined (fewer matches than teams) — retry with only teams seen in fuel matches,
+    // then re-expand back to allTeamNums-indexed array so callers stay unchanged.
+    const seenNums = [...new Set(
+        fuelMs.flatMap(m => [...(m.red ?? []), ...(m.blue ?? [])]).map(t => parseInt(t)).filter(n => !isNaN(n))
+    )];
+    const reduced = computeLocalOPR(fuelMs, seenNums);
+    if (!reduced) return null;
+    const full = new Array(allTeamNums.length).fill(0);
+    seenNums.forEach((tn, i) => {
+        const idx = allTeamNums.indexOf(tn);
+        if (idx !== -1) full[idx] = reduced[i];
+    });
+    return full;
+}
+
+// Historical RP achievement rate for an alliance.  Returns max over 3 teams (optimistic).
+function wlHistoricalRPRate(teamNumbers, rpField, playedMatches) {
+    const rates = (teamNumbers ?? []).map(tn => {
+        const played = playedMatches.filter(m =>
+            (m.redScore ?? -1) >= 0 &&
+            (m.red?.includes(String(tn)) || m.blue?.includes(String(tn)))
+        );
+        if (!played.length) return null;
+        const hit = played.filter(m => {
+            const bd = m.red?.includes(String(tn)) ? m.redBreakdown : m.blueBreakdown;
+            return bd?.[rpField];
+        });
+        return hit.length / played.length;
+    }).filter(r => r != null);
+    return rates.length ? Math.max(...rates) : 0.5;
+}
+
+function wlSample(arr) {
+    return arr[Math.floor(Math.random() * arr.length)];
+}
+
+// Monte Carlo prediction for one unplayed match.
+// Returns { redProb, tieProb, blueProb, redPredicted, bluePredicted, rpProbs: {red, blue} }
+// Win probability uses differential residuals so shared match-level noise is captured; RP
+// probability uses per-alliance relative residuals since RP thresholds are per-alliance.
+function wlSimulateMatch(match, tbaMap, teamsMap, allTeamNums, relResiduals, diffResiduals, gameConfig, effectiveThresholds, playedMatches, fuelOPRCache, N = 500) {
+    const avg       = wlEventAvgOPR(tbaMap);
+    const oprWeight = Math.min(1, playedMatches.length / 30);
+    const redPred   = wlAlliancePredictedScore(match.red,  tbaMap, teamsMap, avg, oprWeight);
+    const bluePred  = wlAlliancePredictedScore(match.blue, tbaMap, teamsMap, avg, oprWeight);
+
+    // Differential pool for win probability — models the score margin, not each alliance in isolation.
+    const diffPool = wlBuildDiffPool(diffResiduals, match.red, match.blue, teamsMap, redPred, bluePred);
+    // Per-alliance pools for RP threshold probability (still need per-alliance score estimates).
+    const redPool  = wlBuildRelPool(relResiduals, match.red,  teamsMap, redPred);
+    const bluePool = wlBuildRelPool(relResiduals, match.blue, teamsMap, bluePred);
+
+    let redWins = 0, ties = 0;
+    const rpRed = {}, rpBlue = {};
+    for (const rpt of effectiveThresholds) { rpRed[rpt.rpField] = 0; rpBlue[rpt.rpField] = 0; }
+
+    // Pre-compute predicted fuel per alliance (constant across simulations).
+    const fuelPred = {};
+    for (const rpt of effectiveThresholds) {
+        if (rpt.threshold == null) continue;
+        const fuelArr = fuelOPRCache[rpt.scoreComponent];
+        // fuelArr is valid only if the OPR solve produced at least one positive value.
+        // An all-zeros result (truthy array) occurs when breakdown data is missing/zero —
+        // fall through to the EPA fallback in that case.
+        const fuelOPRValid = Array.isArray(fuelArr) && fuelArr.some(v => v > 0.5);
+        if (fuelOPRValid) {
+            // Clip individual team OPR contributions to ≥ 0 — negative OPR is an artifact
+            // of the least-squares solve and would wrongly suppress the alliance sum.
+            fuelPred[rpt.rpField] = {
+                r: (match.red  ?? []).reduce((s, tn) => { const idx = allTeamNums.indexOf(parseInt(tn)); return s + Math.max(0, fuelArr[idx] ?? 0); }, 0),
+                b: (match.blue ?? []).reduce((s, tn) => { const idx = allTeamNums.indexOf(parseInt(tn)); return s + Math.max(0, fuelArr[idx] ?? 0); }, 0),
+            };
+        } else if (rpt.fuelEPAKey) {
+            // OPR unavailable or degenerate — sum each team's Statbotics EPA fuel component.
+            const epaSum = (tns) => (tns ?? []).reduce((s, tn) =>
+                s + Math.max(0, teamsMap[parseInt(tn)]?.epa?.breakdown?.[rpt.fuelEPAKey] ?? 0), 0);
+            fuelPred[rpt.rpField] = { r: epaSum(match.red), b: epaSum(match.blue) };
+        } else {
+            fuelPred[rpt.rpField] = { r: redPred * 0.4, b: bluePred * 0.4 };
+        }
+    }
+
+    const diffPred = redPred - bluePred;
+    for (let i = 0; i < N; i++) {
+        const diffSim = diffPred + wlSample(diffPool);
+        if (diffSim > 0)                   redWins++;
+        else if (Math.abs(diffSim) < 1)    ties++;
+
+        for (const rpt of effectiveThresholds) {
+            if (rpt.threshold == null) continue;
+            const { r: rf, b: bf } = fuelPred[rpt.rpField];
+            const rsim = Math.max(0, rf * (1 + wlSample(redPool)));
+            const bsim = Math.max(0, bf * (1 + wlSample(bluePool)));
+            if (rsim >= rpt.threshold) rpRed[rpt.rpField]++;
+            if (bsim >= rpt.threshold) rpBlue[rpt.rpField]++;
+        }
+    }
+
+    // Binary RPs use historical rate, not per-trial sampling
+    for (const rpt of effectiveThresholds) {
+        if (rpt.threshold != null) continue;
+        rpRed[rpt.rpField]  = Math.round(wlHistoricalRPRate(match.red,  rpt.rpField, playedMatches) * N);
+        rpBlue[rpt.rpField] = Math.round(wlHistoricalRPRate(match.blue, rpt.rpField, playedMatches) * N);
+    }
+
+    // Apply linear calibration: p_cal = 0.5 + β(p − 0.5), then renormalize with tieProb intact.
+    const β = wlCalibrationBeta;
+    const rawRed  = redWins / N;
+    const rawBlue = (N - redWins - ties) / N;
+    const rawTie  = ties / N;
+    const calRed  = Math.max(0, 0.5 + β * (rawRed  - 0.5));
+    const calBlue = Math.max(0, 0.5 + β * (rawBlue - 0.5));
+    const calSum  = calRed + calBlue + rawTie;
+
+    return {
+        redProb: calRed / calSum, tieProb: rawTie / calSum, blueProb: calBlue / calSum,
+        redPredicted: redPred, bluePredicted: bluePred,
+        rpProbs: {
+            red:  Object.fromEntries(effectiveThresholds.map(r => [r.rpField, rpRed[r.rpField]  / N])),
+            blue: Object.fromEntries(effectiveThresholds.map(r => [r.rpField, rpBlue[r.rpField] / N])),
+        },
+    };
+}
+
+// Sum actual RPs earned from played matches.
+function wlComputeActualRP(playedMatches) {
+    const rpMap = {};
+    for (const m of playedMatches) {
+        if ((m.redScore ?? -1) < 0) continue;
+        const rRP = m.redBreakdown?.rp  ?? (m.redScore  > m.blueScore  ? 3 : m.redScore  === m.blueScore  ? 1 : 0);
+        const bRP = m.blueBreakdown?.rp ?? (m.blueScore > m.redScore   ? 3 : m.blueScore === m.redScore   ? 1 : 0);
+        for (const tn of (m.red  ?? [])) rpMap[String(tn)] = (rpMap[String(tn)] ?? 0) + rRP;
+        for (const tn of (m.blue ?? [])) rpMap[String(tn)] = (rpMap[String(tn)] ?? 0) + bRP;
+    }
+    return rpMap;
+}
+
+// Simulate all remaining matches N times. Returns { [teamNumber]: { mean, p10, p90, meanRP } }.
+function wlSimulateStandings(baseRP, unplayed, matchPredictions, effectiveThresholds, N = 500) {
+    const rankSamples = {};
+    const rpSums      = {};
+    for (let i = 0; i < N; i++) {
+        const simRP = { ...baseRP };
+        for (const m of unplayed) {
+            const pred = matchPredictions[m.key];
+            if (!pred) continue;
+            const r = Math.random();
+            let rRP, bRP;
+            if      (r < pred.redProb)                     { rRP = 3; bRP = 0; }
+            else if (r < pred.redProb + pred.tieProb)      { rRP = 1; bRP = 1; }
+            else                                            { rRP = 0; bRP = 3; }
+            for (const rpt of effectiveThresholds) {
+                if (Math.random() < (pred.rpProbs.red[rpt.rpField]  ?? 0)) rRP++;
+                if (Math.random() < (pred.rpProbs.blue[rpt.rpField] ?? 0)) bRP++;
+            }
+            for (const tn of (m.red  ?? [])) simRP[String(tn)] = (simRP[String(tn)] ?? 0) + rRP;
+            for (const tn of (m.blue ?? [])) simRP[String(tn)] = (simRP[String(tn)] ?? 0) + bRP;
+        }
+        const ranked = Object.entries(simRP).sort((a, b) => b[1] - a[1]);
+        ranked.forEach(([tn, rp], idx) => {
+            (rankSamples[tn] = rankSamples[tn] ?? []).push(idx + 1);
+            rpSums[tn] = (rpSums[tn] ?? 0) + rp;
+        });
+    }
+    return Object.fromEntries(Object.entries(rankSamples).map(([tn, rs]) => {
+        rs.sort((a, b) => a - b);
+        return [tn, {
+            mean:   +(rs.reduce((s, r) => s + r, 0) / rs.length).toFixed(1),
+            p10:    rs[Math.floor(rs.length * 0.10)],
+            p90:    rs[Math.floor(rs.length * 0.90)],
+            meanRP: +(rpSums[tn] / N).toFixed(1),
+        }];
+    }));
+}
+
+// Estimate how much a single match outcome shifts the focused team's projected rank.
+// Runs two fixed-outcome simulations (red wins / blue wins) and returns the larger delta.
+function wlComputeImpact(focusedTN, baselineMean, matchKey, unplayed, matchPredictions, baseRP, effectiveThresholds, N = 500) {
+    const runFixed = (forceRed) => {
+        const sums = [];
+        for (let i = 0; i < N; i++) {
+            const simRP = { ...baseRP };
+            for (const m of unplayed) {
+                const pred = matchPredictions[m.key];
+                if (!pred) continue;
+                let rRP, bRP;
+                if (m.key === matchKey) {
+                    if (forceRed > 0)       { rRP = 3; bRP = 0; }
+                    else if (forceRed === 0){ rRP = 1; bRP = 1; }
+                    else                    { rRP = 0; bRP = 3; }
+                } else {
+                    const r = Math.random();
+                    if      (r < pred.redProb)                    { rRP = 3; bRP = 0; }
+                    else if (r < pred.redProb + pred.tieProb)     { rRP = 1; bRP = 1; }
+                    else                                           { rRP = 0; bRP = 3; }
+                }
+                for (const rpt of effectiveThresholds) {
+                    if (Math.random() < (pred.rpProbs.red[rpt.rpField]  ?? 0)) rRP++;
+                    if (Math.random() < (pred.rpProbs.blue[rpt.rpField] ?? 0)) bRP++;
+                }
+                for (const tn of (m.red  ?? [])) simRP[String(tn)] = (simRP[String(tn)] ?? 0) + rRP;
+                for (const tn of (m.blue ?? [])) simRP[String(tn)] = (simRP[String(tn)] ?? 0) + bRP;
+            }
+            const ranked = Object.entries(simRP).sort((a, b) => b[1] - a[1]);
+            const idx = ranked.findIndex(([tn]) => tn === String(focusedTN));
+            sums.push(idx >= 0 ? idx + 1 : ranked.length + 1);
+        }
+        return sums.reduce((s, r) => s + r, 0) / sums.length;
+    };
+    const redMean  = runFixed(1);
+    const blueMean = runFixed(-1);
+    return {
+        impact: Math.max(Math.abs(baselineMean - redMean), Math.abs(baselineMean - blueMean)),
+        rankIfRedWins:  redMean,
+        rankIfBlueWins: blueMean,
+    };
+}
+
+// ── PRE-EVENT BASELINE SNAPSHOT ──────────────────────────────────────────────
+
+function computePreEventSnapshot(eventKey, allMatches, teamsMap, tbaMap, allTeamNums, gameConfig, effectiveThresholds) {
+    const matchPredictions = {};
+    for (const m of allMatches) {
+        matchPredictions[m.key] = wlSimulateMatch(
+            m, tbaMap, teamsMap, allTeamNums,
+            [], [],       // empty residuals → Gaussian prior only
+            gameConfig, effectiveThresholds,
+            [],           // no played matches
+            {}            // empty fuel OPR → EPA fallback via fuelEPAKey
+        );
+    }
+    const rankDistrib = wlSimulateStandings({}, allMatches, matchPredictions, effectiveThresholds);
+    const snapshot = { computed: new Date().toISOString(), rankDistrib, matchPredictions };
+    localStorage.setItem(`wlPreEventSnapshot_${eventKey}`, JSON.stringify(snapshot));
+    return snapshot;
+}
+
+window.resetPreEventSnapshot = function(eventKey) {
+    if (!wlDetailCache) return;
+    const { allMatches, teamsMap, tbaMap, allTeamNums, gameConfig, effectiveThresholds } = wlDetailCache;
+    localStorage.removeItem(`wlPreEventSnapshot_${eventKey}`);
+    wlPreEventCache = computePreEventSnapshot(eventKey, allMatches, teamsMap, tbaMap, allTeamNums, gameConfig, effectiveThresholds);
+    wlMatchesRenderedFor = null;
+    renderWatchList();
+};
+
+// ── WATCH LIST RENDERER ──────────────────────────────────────────────────────
+
+async function renderWatchList() {
+    watchListDirty = false;
+    const container = document.getElementById('schedule-sub-watchlist');
+    if (!container) return;
+    container.innerHTML = `<p style="color:#64748b;padding:20px 0;">Computing Watch List…</p>`;
+
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    if (eventKey) {
+        const saved = parseFloat(localStorage.getItem(`wlCalibrationBeta_${eventKey}`));
+        wlCalibrationBeta = isNaN(saved) ? 1.0 : saved;
+    }
+    if (!eventKey) {
+        container.innerHTML = `<p style="color:#64748b;padding:20px 0;">Enter an event key first.</p>`;
+        return;
+    }
+
+    const gameConfig = getGameConfig(eventKey);
+    const effectiveThresholds = getEffectiveThresholds(gameConfig, eventKey);
+
+    const [allMatches, allTBATeams, allTeams] = await Promise.all([
+        db.matches.where('eventKey').equals(eventKey).toArray(),
+        db.tbaTeams.toArray(),
+        db.teams.toArray(),
+    ]);
+
+    if (!allMatches.length) {
+        container.innerHTML = `<p style="color:#64748b;padding:20px 0;">No schedule loaded — sync TBA matches first.</p>`;
+        return;
+    }
+
+    const tbaMap   = Object.fromEntries(allTBATeams.map(t => [t.teamNumber, t]));
+    const teamsMap = Object.fromEntries(allTeams.map(t => [t.teamNumber, t]));
+    const allTeamNums = [...new Set(
+        allMatches.flatMap(m => [...(m.red ?? []), ...(m.blue ?? [])]).map(tn => parseInt(tn)).filter(n => !isNaN(n))
+    )];
+    const cutoffN  = watchListCutoff;
+    const totalMatchCount = allMatches.length;
+
+    // Load or silently compute pre-event baseline (run once per event key)
+    const snapshotKey = `wlPreEventSnapshot_${eventKey}`;
+    const storedSnap = localStorage.getItem(snapshotKey);
+    wlPreEventCache = storedSnap ? JSON.parse(storedSnap) : null;
+    if (!wlPreEventCache) {
+        wlPreEventCache = computePreEventSnapshot(eventKey, allMatches, teamsMap, tbaMap, allTeamNums, gameConfig, effectiveThresholds);
+    }
+
+    const playedMatches = allMatches.filter(m =>
+        (m.redScore ?? -1) >= 0 && (cutoffN == null || m.matchNumber <= cutoffN)
+    );
+    const unplayed = allMatches.filter(m =>
+        (m.redScore ?? -1) < 0 || (cutoffN != null && m.matchNumber > cutoffN)
+    );
+
+    const focusedTN  = String(window.currentFocusedTeam || OWN_TEAM);
+    const { relResiduals, diffResiduals } = wlCollectResiduals(playedMatches, tbaMap, teamsMap);
+
+    // Pre-build fuel OPR for each unique score component used in threshold RPs.
+    // Falls back to Statbotics EPA (fuelEPAKey) when OPR is underdetermined.
+    const fuelOPRCache = {};
+    for (const rpt of effectiveThresholds) {
+        if (rpt.threshold != null && rpt.scoreComponent && !(rpt.scoreComponent in fuelOPRCache)) {
+            fuelOPRCache[rpt.scoreComponent] = wlComputeFuelOPR(playedMatches, allTeamNums, rpt.scoreComponent, gameConfig);
+        }
+    }
+
+    // Predict all unplayed matches
+    const matchPredictions = {};
+    for (const m of unplayed) {
+        matchPredictions[m.key] = wlSimulateMatch(m, tbaMap, teamsMap, allTeamNums, relResiduals, diffResiduals, gameConfig, effectiveThresholds, playedMatches, fuelOPRCache);
+    }
+
+
+    const baseRP      = wlComputeActualRP(playedMatches);
+    const rankDistrib = wlSimulateStandings(baseRP, unplayed, matchPredictions, effectiveThresholds);
+
+    wlDetailCache = { allMatches, matchPredictions, baseRP, playedMatches, effectiveThresholds, rankDistrib, teamsMap,
+                      tbaMap, allTeamNums, relResiduals, diffResiduals, fuelOPRCache, gameConfig };
+
+    const focDist = rankDistrib[focusedTN] ?? { mean: '?', p10: '?', p90: '?' };
+    const focRP   = baseRP[focusedTN] ?? 0;
+    const top12Set = new Set(
+        Object.entries(rankDistrib).sort((a, b) => a[1].mean - b[1].mean).slice(0, 12).map(([tn]) => tn)
+    );
+    const focusedRank = typeof rankDistrib[focusedTN]?.mean === 'number' ? rankDistrib[focusedTN].mean : null;
+
+    const yourMatches  = unplayed.filter(m =>  m.red?.includes(focusedTN) || m.blue?.includes(focusedTN));
+    const otherMatches = unplayed.filter(m => !m.red?.includes(focusedTN) && !m.blue?.includes(focusedTN));
+
+    // ── Controls ─────────────────────────────────────────────────────────────
+
+    const thresholdCtrls = effectiveThresholds.filter(r => r.threshold != null).map(rpt => `
+        <span style="color:#94a3b8;font-size:0.82em;white-space:nowrap;">${rpt.label} ≥
+            <input type="number" min="0" step="1" value="${rpt.threshold}"
+                style="width:56px;padding:2px 5px;background:#0f172a;border:1px solid #334155;color:#f8fafc;border-radius:4px;font-size:0.9em;"
+                onchange="saveWatchRPThreshold('${rpt.rpField}',this.value,'${eventKey}')">
+            <span style="color:#64748b;font-size:0.85em;">fuel</span>
+        </span>`).join('');
+
+    const resetBtn = effectiveThresholds.some(r => r.threshold != null)
+        ? `<button onclick="resetWatchRPThresholds('${eventKey}')" style="background:transparent;color:#64748b;border:1px solid #334155;border-radius:4px;padding:2px 8px;font-size:0.78em;cursor:pointer;">Reset</button>`
+        : '';
+
+    const cutoffCtrl = `<span style="color:#94a3b8;font-size:0.82em;white-space:nowrap;">From Q
+        <input type="number" min="1" max="${totalMatchCount}" value="${cutoffN ?? ''}" placeholder="all"
+            style="width:48px;padding:2px 5px;background:#0f172a;border:1px solid #334155;color:#f8fafc;border-radius:4px;font-size:0.9em;"
+            onchange="setWatchListCutoff(this.value||null)">/${totalMatchCount}
+        ${cutoffN != null ? `<button onclick="setWatchListCutoff(null)" style="background:transparent;color:#64748b;border:1px solid #334155;border-radius:4px;padding:2px 6px;font-size:0.78em;cursor:pointer;margin-left:3px;">Live</button>` : ''}
+    </span>`;
+
+    const snapDate = wlPreEventCache
+        ? new Date(wlPreEventCache.computed).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+        : '—';
+    const hasOPR = Object.values(tbaMap).some(t => t.opr != null);
+    const baselineTip = 'Pre-event baseline: frozen snapshot using EPA only (no OPR, no residuals). Differences from live sim are expected if data was re-synced or OPR has since become available. Click Reset to recompute.';
+    const oprNote = hasOPR ? ' <span style="color:#475569;font-size:0.78em;" title="OPR is now available — baseline was computed without it">+OPR</span>' : '';
+    const baselineCtrl = `<span style="color:#94a3b8;font-size:0.82em;white-space:nowrap;" title="${baselineTip}">Baseline: ${snapDate}${oprNote}
+        <button onclick="resetPreEventSnapshot('${eventKey}')"
+            style="background:transparent;color:#64748b;border:1px solid #334155;border-radius:4px;padding:2px 6px;font-size:0.78em;cursor:pointer;margin-left:4px;">Reset</button>
+    </span>`;
+
+    const debugBanner = cutoffN != null
+        ? `<div style="background:rgba(251,191,36,0.08);border:1px solid #b45309;border-radius:6px;padding:8px 14px;margin-bottom:12px;color:#fbbf24;font-size:0.85em;">
+               ⚠ Debug mode — simulating from match ${cutoffN} (${playedMatches.length} played, ${unplayed.length} remaining)
+           </div>` : '';
+
+    // ── Standings table ───────────────────────────────────────────────────────
+
+    const standingsRows = Object.entries(rankDistrib)
+        .sort((a, b) => a[1].mean - b[1].mean)
+        .slice(0, 12)
+        .map(([tn, d], i) => {
+            const isFoc  = tn === focusedTN;
+            const stat   = teamsMap[parseInt(tn)];
+            const epa    = stat?.currentEPA;
+            const sd     = stat?.epa?.total_points?.sd;
+            const epaStr = epa != null
+                ? `<span style="color:#64748b;font-size:0.78em;font-weight:400;margin-left:5px;">${epa.toFixed(0)}${sd != null ? ` ±${sd.toFixed(0)}` : ''}</span>`
+                : '';
+            const preD = wlPreEventCache?.rankDistrib?.[tn];
+            const prePart = preD ? `<span style="color:#475569;font-size:0.78em;"> · pre&nbsp;${preD.mean}</span>` : '';
+            return `<tr onclick="viewTeamDetail(${tn},'matches')" style="cursor:pointer;${isFoc ? 'background:rgba(251,191,36,0.06);font-weight:600;' : ''}">
+                <td style="padding:4px 8px;text-align:center;color:#64748b;">${i + 1}</td>
+                <td style="padding:4px 8px;${isFoc ? 'color:#fbbf24;' : ''}">${tn}${ownStar(tn)}${epaStr}</td>
+                <td style="padding:4px 8px;text-align:center;color:#94a3b8;">${baseRP[tn] ?? 0}</td>
+                <td style="padding:4px 8px;text-align:center;">${d.mean}${prePart} <span style="color:#64748b;font-size:0.82em;font-weight:400;">(${d.meanRP.toFixed(1)} RP)</span></td>
+                <td style="padding:4px 8px;text-align:center;color:#64748b;font-size:0.82em;">${d.p10}–${d.p90}</td>
+            </tr>`;
+        }).join('');
+
+    // ── Match card builder ────────────────────────────────────────────────────
+
+    const matchCard = (m, pred, impactLabel = '', rankInfo = null) => {
+        if (!m || !pred) return '';
+        const redFoc  = m.red?.includes(focusedTN);
+        const blueFoc = m.blue?.includes(focusedTN);
+
+        // Focused team's alliance always on the left; default red-left
+        const leftIsBlue  = blueFoc && !redFoc;
+        const leftTeams   = leftIsBlue ? (m.blue ?? []) : (m.red  ?? []);
+        const rightTeams  = leftIsBlue ? (m.red  ?? []) : (m.blue ?? []);
+        const leftLabel   = leftIsBlue ? 'BLU' : 'RED';
+        const rightLabel  = leftIsBlue ? 'RED' : 'BLU';
+        const leftColor   = leftIsBlue ? '#3b82f6' : '#ef4444';
+        const rightColor  = leftIsBlue ? '#ef4444' : '#3b82f6';
+        const leftBarClr  = leftIsBlue ? 'rgba(59,130,246,0.5)'  : 'rgba(239,68,68,0.5)';
+        const rightBarClr = leftIsBlue ? 'rgba(239,68,68,0.5)'   : 'rgba(59,130,246,0.5)';
+        const leftPctNum  = leftIsBlue ? pred.blueProb  : pred.redProb;
+        const rightPctNum = leftIsBlue ? pred.redProb   : pred.blueProb;
+        const leftPred    = leftIsBlue ? pred.bluePredicted : pred.redPredicted;
+        const rightPred   = leftIsBlue ? pred.redPredicted  : pred.bluePredicted;
+        const leftRank    = rankInfo ? (leftIsBlue  ? rankInfo.rankIfBlueWins : rankInfo.rankIfRedWins)  : null;
+        const rightRank   = rankInfo ? (leftIsBlue  ? rankInfo.rankIfRedWins  : rankInfo.rankIfBlueWins) : null;
+
+        const leftPct  = Math.round(leftPctNum  * 100);
+        const rightPct = Math.round(rightPctNum * 100);
+
+        // Favorable = focused team's own alliance (always left), or whichever side gives a better rank
+        let favorableLeft = null;
+        if (redFoc || blueFoc) {
+            favorableLeft = true;
+        } else if (leftRank !== null && rightRank !== null && leftRank !== rightRank) {
+            favorableLeft = leftRank < rightRank;  // lower rank number = better
+        }
+
+        const teamSpan = (tn) => {
+            const isFoc = String(tn) === focusedTN;
+            let skull = '';
+            if (!isFoc && focusedRank !== null && top12Set.has(String(tn))) {
+                const tnRank = rankDistrib[String(tn)]?.mean;
+                if (typeof tnRank === 'number') {
+                    const color = tnRank < focusedRank ? '#ef4444' : '#fbbf24';
+                    const title = tnRank < focusedRank
+                        ? `Projected ahead of ${focusedTN} (~rank ${tnRank.toFixed(1)})`
+                        : `Projected behind ${focusedTN} (~rank ${tnRank.toFixed(1)})`;
+                    skull = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="${color}" fill-rule="evenodd" style="vertical-align:middle;margin-left:2px;flex-shrink:0;" title="${title.replace(/"/g,'&quot;')}"><path d="M12,2A9,9 0 0,1 21,11C21,14.03 19.5,16.82 17,18.5V21A1,1 0 0,1 16,22H8A1,1 0 0,1 7,21V18.5C4.5,16.82 3,14.03 3,11A9,9 0 0,1 12,2M9,9A2,2 0 0,0 7,11A2,2 0 0,0 9,13A2,2 0 0,0 11,11A2,2 0 0,0 9,9M15,9A2,2 0 0,0 13,11A2,2 0 0,0 15,13A2,2 0 0,0 17,11A2,2 0 0,0 15,9M12,17A1,1 0 0,0 11,18A1,1 0 0,0 12,19A1,1 0 0,0 13,18A1,1 0 0,0 12,17Z"/></svg>`;
+                }
+            }
+            return `<span onclick="event.stopPropagation();highlightTeam('${tn}')" style="cursor:pointer;${isFoc?'color:#fbbf24;font-weight:700;':''}">${tn}${ownStar(tn)}${skull}</span>`;
+        };
+
+        const rankRow = `
+            <div style="display:flex;justify-content:space-between;font-size:0.78em;color:#64748b;margin-top:3px;">
+                <span>${leftRank != null ? `rank if won: ${leftRank.toFixed(1)}` : '…'}</span>
+                <span>${rightRank != null ? `rank if won: ${rightRank.toFixed(1)}` : '…'}</span>
+            </div>`;
+
+        const rpRow = effectiveThresholds.length ? `
+            <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:7px;font-size:0.78em;color:#94a3b8;">
+                ${effectiveThresholds.map(rpt => {
+                    const prob = redFoc ? (pred.rpProbs.red[rpt.rpField] ?? 0)
+                               : blueFoc ? (pred.rpProbs.blue[rpt.rpField] ?? 0)
+                               : Math.max(pred.rpProbs.red[rpt.rpField] ?? 0, pred.rpProbs.blue[rpt.rpField] ?? 0);
+                    const pct = Math.round(prob * 100);
+                    const fill = `linear-gradient(to right,#22c55e ${pct}%,#1e293b ${pct}%)`;
+                    return `<span>${rpt.label} <span style="display:inline-block;width:44px;height:6px;border-radius:3px;background:${fill};vertical-align:middle;margin:0 3px;"></span>${pct}%</span>`;
+                }).join('')}
+            </div>` : '';
+
+        return `<div id="wmc-${m.key}" onclick="viewMatchDetail('${m.key}')" style="cursor:pointer;background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:12px 14px;margin-bottom:10px;">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;">
+                <strong style="color:#3b82f6;cursor:pointer;" onclick="event.stopPropagation();viewMatchPrep('${m.key}')">Q${m.matchNumber}</strong>
+                ${impactLabel ? `<span style="color:#64748b;font-size:0.78em;">rank impact ±${impactLabel}</span>` : ''}
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:6px;gap:8px;">
+                <div>
+                    <div style="color:${leftColor};font-size:0.72em;font-weight:700;letter-spacing:0.05em;margin-bottom:2px;">${leftLabel}</div>
+                    <div style="font-size:0.88em;">${leftTeams.map(teamSpan).join(' · ')}</div>
+                </div>
+                <div style="text-align:right;">
+                    <div style="color:${rightColor};font-size:0.72em;font-weight:700;letter-spacing:0.05em;margin-bottom:2px;">${rightLabel}</div>
+                    <div style="font-size:0.88em;">${rightTeams.map(teamSpan).join(' · ')}</div>
+                </div>
+            </div>
+            <div style="display:flex;height:18px;border-radius:4px;overflow:hidden;">
+                <div style="flex:${Math.max(leftPct,1)};background:${leftBarClr};display:flex;align-items:center;padding:0 6px;font-size:0.75em;font-weight:700;${favorableLeft===true?'box-shadow:inset 0 0 0 2px rgba(255,255,255,0.55);':''}">
+                    <span style="color:${leftIsBlue?'#93c5fd':'#fca5a5'};">${leftPct}%</span>
+                </div>
+                <div style="flex:${Math.max(rightPct,1)};background:${rightBarClr};display:flex;align-items:center;justify-content:flex-end;padding:0 6px;font-size:0.75em;font-weight:700;${favorableLeft===false?'box-shadow:inset 0 0 0 2px rgba(255,255,255,0.55);':''}">
+                    <span style="color:${leftIsBlue?'#fca5a5':'#93c5fd'};">${rightPct}%</span>
+                </div>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:0.82em;color:#475569;margin-top:5px;">
+                <span>${leftPred.toFixed(0)} pts</span>
+                <span>${rightPred.toFixed(0)} pts</span>
+            </div>
+            ${rankRow}
+            ${rpRow}
+        </div>`;
+    };
+
+    // ── Initial render ────────────────────────────────────────────────────────
+
+    container.innerHTML = `
+        ${debugBanner}
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 14px;background:#0f172a;border:1px solid #1e293b;border-radius:8px;margin-bottom:14px;">
+            <span style="color:#f8fafc;font-weight:600;">Watching: ${focusedTN}</span>
+            <span style="color:#334155;">|</span>
+            <span style="color:#94a3b8;font-size:0.88em;">${focRP} RP · Proj rank ${focDist.p10}–${focDist.p90} (avg ${focDist.mean})</span>
+            ${thresholdCtrls}
+            ${resetBtn}
+            ${cutoffCtrl}
+            ${baselineCtrl}
+        </div>
+
+        <div id="wl-progress-wrap" style="margin-bottom:14px;">
+            <div style="display:flex;justify-content:space-between;font-size:0.75em;color:#64748b;margin-bottom:4px;">
+                <span>Computing impact analysis…</span>
+                <span id="wl-progress-pct">0%</span>
+            </div>
+            <div style="height:4px;background:#1e293b;border-radius:2px;">
+                <div id="wl-progress-bar" style="height:100%;width:0%;background:#3b82f6;border-radius:2px;transition:width 0.15s;"></div>
+            </div>
+        </div>
+
+        <div style="margin-bottom:20px;">
+            <div onclick="window.toggleWLSection('standings')" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;color:#94a3b8;font-size:0.75em;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:8px;user-select:none;">
+                <span>Projected Standings (top 12)</span>
+                <span id="wl-standings-arrow" style="font-size:0.9em;">${wlStandingsCollapsed ? '▶' : '▼'}</span>
+            </div>
+            <div id="wl-standings-body" style="${wlStandingsCollapsed ? 'display:none' : ''}">
+                <div style="overflow-x:auto;">
+                    <table style="width:100%;border-collapse:collapse;font-size:0.85em;">
+                        <thead><tr style="color:#64748b;font-size:0.78em;text-transform:uppercase;letter-spacing:0.04em;">
+                            <th style="padding:4px 8px;text-align:center;">#</th>
+                            <th style="padding:4px 8px;">Team · EPA ±SD</th>
+                            <th style="padding:4px 8px;text-align:center;">RP Now</th>
+                            <th style="padding:4px 8px;text-align:center;">Proj. Rank · Total RP</th>
+                            <th style="padding:4px 8px;text-align:center;">Range</th>
+                        </tr></thead>
+                        <tbody>${standingsRows}</tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div onclick="window.toggleWLSection('your')" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;color:#94a3b8;font-size:0.75em;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:8px;user-select:none;">
+            <span>Your Remaining Matches (${yourMatches.length})</span>
+            <span id="wl-your-arrow" style="font-size:0.9em;">${wlYourCollapsed ? '▶' : '▼'}</span>
+        </div>
+        <div id="wl-your-matches" style="${wlYourCollapsed ? 'display:none' : ''}">
+            ${yourMatches.length
+                ? yourMatches.map(m => matchCard(m, matchPredictions[m.key], '…')).join('')
+                : `<p style="color:#475569;font-size:0.85em;margin-bottom:16px;">No remaining matches for team ${focusedTN}.</p>`}
+        </div>
+
+        <div id="wl-other-header" onclick="window.toggleWLSection('other')" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;color:#94a3b8;font-size:0.75em;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;margin:16px 0 8px;user-select:none;">
+            <span id="wl-other-header-text">Matches to Watch — computing impact…</span>
+            <span id="wl-other-arrow" style="font-size:0.9em;">${wlOtherCollapsed ? '▶' : '▼'}</span>
+        </div>
+        <div id="wl-other-matches" style="${wlOtherCollapsed ? 'display:none' : ''}">
+            ${otherMatches.map(m => matchCard(m, matchPredictions[m.key], '')).join('')}
+        </div>`;
+
+    // ── Async impact analysis ─────────────────────────────────────────────────
+    // Process one match per idle frame (your + other combined), then re-render both sections.
+
+    const allWLMatches = [
+        ...yourMatches.map(m => ({ match: m, isYours: true })),
+        ...otherMatches.map(m => ({ match: m, isYours: false })),
+    ];
+    const impactResults = [];
+    const _focusedTN   = focusedTN;
+    const _baselineMean = +focDist.mean;
+    const _unplayed    = unplayed;
+    const _matchPred   = matchPredictions;
+    const _baseRP      = baseRP;
+    const _thresholds  = effectiveThresholds;
+    const _matchCard   = matchCard;
+    const _yourLen     = yourMatches.length;
+    let _idx = 0;
+
+    const sched = typeof requestIdleCallback !== 'undefined'
+        ? (fn) => requestIdleCallback(fn, { timeout: 200 })
+        : (fn) => setTimeout(fn, 0);
+
+    const _total = allWLMatches.length;
+
+    const updateProgress = (done) => {
+        const pct = _total > 0 ? Math.round((done / _total) * 100) : 100;
+        const bar  = document.getElementById('wl-progress-bar');
+        const pctEl = document.getElementById('wl-progress-pct');
+        if (bar)   bar.style.width = pct + '%';
+        if (pctEl) pctEl.textContent = pct + '%';
+    };
+
+    const processNext = () => {
+        if (_idx >= _total) {
+            // Hide progress bar
+            const wrap = document.getElementById('wl-progress-wrap');
+            if (wrap) wrap.style.display = 'none';
+
+            // Re-render "Your Matches" in match-number order with impact labels
+            if (_yourLen > 0) {
+                const yourResults = impactResults
+                    .filter(r => r.isYours)
+                    .sort((a, b) => a.match.matchNumber - b.match.matchNumber);
+                const yourSection = document.getElementById('wl-your-matches');
+                if (yourSection) yourSection.innerHTML =
+                    yourResults.map(r => _matchCard(r.match, _matchPred[r.match.key], r.impact.toFixed(1) + ' pos', { rankIfRedWins: r.rankIfRedWins, rankIfBlueWins: r.rankIfBlueWins })).join('');
+            }
+
+            // Re-render "Matches to Watch" sorted by impact × uncertainty
+            const significant = impactResults
+                .filter(r => !r.isYours && r.impact >= 0.05)
+                .sort((a, b) => b.score - a.score)
+                .slice(0, 10);
+            const headerText = document.getElementById('wl-other-header-text');
+            const section    = document.getElementById('wl-other-matches');
+            if (headerText) headerText.textContent = `Matches to Watch (${significant.length}) — by impact × uncertainty`;
+            if (section) section.innerHTML = significant.length
+                ? significant.map(r => _matchCard(r.match, _matchPred[r.match.key], r.impact.toFixed(1) + ' pos', { rankIfRedWins: r.rankIfRedWins, rankIfBlueWins: r.rankIfBlueWins })).join('')
+                : `<p style="color:#475569;font-size:0.85em;">No matches found that significantly affect ${_focusedTN}'s ranking.</p>`;
+            return;
+        }
+        const { match: m, isYours } = allWLMatches[_idx++];
+        const pred = _matchPred[m.key];
+        const uncertainty = 1 - Math.abs((pred?.redProb ?? 0.5) - (pred?.blueProb ?? 0.5));
+        const scaledN = Math.max(25, Math.round(500 * uncertainty));
+        const { impact, rankIfRedWins, rankIfBlueWins } = wlComputeImpact(_focusedTN, _baselineMean, m.key, _unplayed, _matchPred, _baseRP, _thresholds, scaledN);
+        impactResults.push({ match: m, isYours, impact, score: impact * uncertainty, rankIfRedWins, rankIfBlueWins });
+        updateProgress(_idx);
+        sched(processNext);
+    };
+    sched(processNext);
+}
+
+window.saveWatchRPThreshold = function (rpField, value, eventKey) {
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(`rpThresholds_${eventKey}`) || '{}'); } catch {}
+    saved[rpField] = Number(value);
+    localStorage.setItem(`rpThresholds_${eventKey}`, JSON.stringify(saved));
+    renderWatchList();
+};
+
+window.resetWatchRPThresholds = function (eventKey) {
+    localStorage.removeItem(`rpThresholds_${eventKey}`);
+    renderWatchList();
+};
+
+window.setWatchListCutoff = function (val) {
+    watchListCutoff = val == null ? null : parseInt(val);
+    renderWatchList();
+};
+
+// Apply a linear calibration factor derived from backtesting.
+// p_cal = 0.5 + beta*(p − 0.5). Resets to 1.0 (no-op) on page reload.
+window.applyWLCalibration = function (beta) {
+    wlCalibrationBeta = parseFloat(beta) || 1.0;
+    const evk = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    if (evk) localStorage.setItem(`wlCalibrationBeta_${evk}`, String(wlCalibrationBeta));
+    watchListDirty = true;
+    if (document.getElementById('schedule-sub-watchlist')?.style.display !== 'none') {
+        renderWatchList();
+    }
+    // Re-run backtest so the badge updates immediately to show the new current β
+    runBacktest();
+};
+
+// --- Backtest event data fetcher ---
+
+// Session-level cache so repeated runs don't re-fetch the same events.
+const btEventCache = new Map();
+
+// Fetch match results, OPR, and Statbotics EPA for any event key that isn't the current event.
+// Returns { matches, tbaMap, teamsMap } in the same shape wlSimulateMatch expects.
+async function btFetchEventData(eventKey) {
+    if (btEventCache.has(eventKey)) return btEventCache.get(eventKey);
+
+    const [matchResp, oprResp, sbResp] = await Promise.all([
+        fetchTBA(`/event/${eventKey}/matches`),
+        fetchTBA(`/event/${eventKey}/oprs`),
+        fetch(`https://api.statbotics.io/v3/team_events?event=${eventKey}`).then(r => r.json()),
+    ]);
+
+    const matches = (Array.isArray(matchResp) ? matchResp : [])
+        .filter(m => m.comp_level === 'qm')
+        .sort((a, b) => a.match_number - b.match_number)
+        .map(m => ({
+            key:           m.key,
+            matchNumber:   m.match_number,
+            red:           m.alliances.red.team_keys.map(k => k.replace('frc', '')),
+            blue:          m.alliances.blue.team_keys.map(k => k.replace('frc', '')),
+            redScore:      m.alliances.red.score,
+            blueScore:     m.alliances.blue.score,
+            redBreakdown:  m.score_breakdown?.red  ?? null,
+            blueBreakdown: m.score_breakdown?.blue ?? null,
+        }));
+
+    const tbaMap = {};
+    for (const [teamKey, opr] of Object.entries(oprResp?.oprs ?? {})) {
+        const tn = parseInt(teamKey.replace('frc', ''));
+        tbaMap[tn] = { teamNumber: tn, opr };
+    }
+
+    const sbList = Array.isArray(sbResp) ? sbResp : (sbResp?.data ?? sbResp?.results ?? []);
+    const teamsMap = {};
+    for (const t of sbList) {
+        teamsMap[t.team] = {
+            teamNumber: t.team,
+            currentEPA: t.epa?.total_points?.mean ?? null,
+            epa:        t.epa ?? null,
+        };
+    }
+
+    const result = { matches, tbaMap, teamsMap };
+    btEventCache.set(eventKey, result);
+    return result;
+}
+
+// --- Statistical helpers for backtest calibration ---
+
+// Standard normal CDF (Abramowitz & Stegun 26.2.17, accurate to ~7 decimal places)
+function btNormalCDF(z) {
+    const t = 1 / (1 + 0.2316419 * Math.abs(z));
+    const d = 0.3989423 * Math.exp(-z * z / 2);
+    const p = 1 - d * t * (0.3193815 + t * (-0.3565638 + t * (1.7814779 + t * (-1.8212560 + t * 1.3302744))));
+    return z >= 0 ? p : 1 - p;
+}
+function btP2(z) { return 2 * (1 - btNormalCDF(Math.abs(z))); }
+
+// Chi-squared upper-tail p-value via Wilson-Hilferty normal approximation (good for df >= 3)
+function btChi2P(chi2, df) {
+    if (chi2 <= 0 || df < 1) return 1;
+    const z = (Math.pow(chi2 / df, 1 / 3) - (1 - 2 / (9 * df))) / Math.sqrt(2 / (9 * df));
+    return 1 - btNormalCDF(z);
+}
+
+// Spiegelhalter (1986) Z-test — tests calibration without binning.
+// Z = Σ(y_i − p_i)(1 − 2p_i) / √(Σ p_i(1−p_i)(1−2p_i)²)
+// Z > 0: overconfident (probs too extreme). Z < 0: underconfident (probs too conservative).
+// H0: Z ~ N(0,1). High p-value = no significant miscalibration.
+function btSpiegelhalter(results) {
+    let num = 0, denom = 0;
+    for (const { p, won } of results) {
+        const y = won ? 1 : 0;
+        num   += (y - p) * (1 - 2 * p);
+        denom += p * (1 - p) * (1 - 2 * p) ** 2;
+    }
+    if (denom <= 0) return { z: 0, p: 1 };
+    const z = num / Math.sqrt(denom);
+    return { z, p: btP2(z) };
+}
+
+// Hosmer-Lemeshow C-statistic (bin-based chi-squared calibration test).
+// C = Σ_k (O_k − E_k)² / (n_k · p̄_k · (1 − p̄_k)),  C ~ χ²(bins_used − 2)
+// E_k = sum of predicted p_i in bin k (not just midpoint × count).
+function btHosmerLemeshow(bins) {
+    let C = 0, used = 0;
+    for (const b of bins) {
+        if (b.count < 1) continue;
+        const Ek = b.predicted;     // sum of p_i, i.e. expected wins in bin
+        const pk = Ek / b.count;
+        if (pk <= 0 || pk >= 1) continue;
+        C += (b.actual - Ek) ** 2 / (b.count * pk * (1 - pk));
+        used++;
+    }
+    const df = Math.max(1, used - 2);
+    return { C, df, p: btChi2P(C, df) };
+}
+
+// Wilson score 95% confidence interval for a proportion.
+function btWilson(k, n) {
+    if (n === 0) return [0, 1];
+    const z = 1.96, p = k / n;
+    const denom = 1 + z * z / n;
+    const center = (p + z * z / (2 * n)) / denom;
+    const margin = z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denom;
+    return [Math.max(0, center - margin), Math.min(1, center + margin)];
+}
+
+// Backtest the win-probability model across one or more event keys.
+// For each match i within an event, predicts using only matches 0..i-1 (forward simulation).
+// The current event is read from IndexedDB; all others are fetched from TBA + Statbotics.
+window.runBacktest = async function () {
+    const resultsEl = document.getElementById('algo-backtest-results');
+    if (!resultsEl) return;
+
+    const currentEv = localStorage.getItem('selectedEvent') || '';
+    const input     = document.getElementById('bt-event-keys');
+    if (input && !input.value.trim()) input.value = currentEv;
+
+    const eventKeys = (input?.value || currentEv)
+        .split(/[\s,]+/)
+        .map(k => k.trim().toLowerCase())
+        .filter(Boolean);
+
+    if (!eventKeys.length) {
+        resultsEl.innerHTML = '<p style="color:#64748b;">Enter at least one event key.</p>';
+        return;
+    }
+
+    // Pre-load current event data from IndexedDB once
+    const [rawMatchesDB, tbaArrDB, teamsArrDB] = await Promise.all([
+        db.matches.toArray(),
+        db.tbaTeams.toArray(),
+        db.teams.toArray(),
+    ]);
+    const dbTBAMap   = {};  tbaArrDB.forEach(t   => { dbTBAMap[t.teamNumber]   = t; });
+    const dbTeamsMap = {};  teamsArrDB.forEach(t  => { dbTeamsMap[t.teamNumber] = t; });
+    const dbPlayed   = rawMatchesDB
+        .filter(m => (m.redScore ?? -1) >= 0)
+        .sort((a, b) => a.matchNumber - b.matchNumber);
+
+    const results = [];        // { eventKey, matchNum, p, won }
+    const eventRows = [];      // { key, count, error } — one per event for the header table
+
+    for (let ei = 0; ei < eventKeys.length; ei++) {
+        const eventKey = eventKeys[ei];
+        resultsEl.innerHTML = `<p style="color:#64748b;font-style:italic;">Fetching ${eventKey} (${ei + 1}/${eventKeys.length})…</p>`;
+
+        let matches, tbaMap, teamsMap;
+        try {
+            if (eventKey === currentEv) {
+                matches  = dbPlayed;
+                tbaMap   = dbTBAMap;
+                teamsMap = dbTeamsMap;
+            } else {
+                ({ matches, tbaMap, teamsMap } = await btFetchEventData(eventKey));
+                matches = matches.filter(m => (m.redScore ?? -1) >= 0);
+            }
+        } catch (e) {
+            eventRows.push({ key: eventKey, count: 0, error: `Fetch failed: ${e.message ?? e}` });
+            continue;
+        }
+
+        const played = [...matches].sort((a, b) => a.matchNumber - b.matchNumber);
+        if (played.length < 3) {
+            eventRows.push({ key: eventKey, count: 0, error: 'Too few played matches' });
+            continue;
+        }
+
+        const evGameConfig = getGameConfig(eventKey);
+        let evCount = 0;
+
+        for (let i = 0; i < played.length; i++) {
+            const m = played[i];
+            if (m.redScore === m.blueScore) continue;   // skip ties
+
+            const history = played.slice(0, i);
+            const { relResiduals, diffResiduals } = wlCollectResiduals(history, tbaMap, teamsMap);
+
+            const pred = wlSimulateMatch(
+                m, tbaMap, teamsMap, [],
+                relResiduals, diffResiduals,
+                evGameConfig, [],   // win probability only, no RP thresholds
+                history, {},
+                400
+            );
+
+            results.push({ eventKey, matchNum: m.matchNumber, p: pred.redProb, won: m.redScore > m.blueScore });
+            evCount++;
+            if (i % 8 === 0) await new Promise(r => setTimeout(r, 0));
+        }
+
+        eventRows.push({ key: eventKey, count: evCount, error: null });
+    }
+
+    if (!results.length) {
+        resultsEl.innerHTML = '<p style="color:#64748b;">No non-tie matches found across the selected events.</p>';
+        return;
+    }
+
+    // Fold to "favorite" perspective: favP ∈ [0.5, 1] always represents the predicted winner.
+    // Doubles effective n per bucket vs the red/blue framing and eliminates the asymmetric tail.
+    // Spiegelhalter Z and β_opt are provably invariant to this folding.
+    const favResults = results.map(r => ({
+        p:   Math.max(r.p, 1 - r.p),
+        won: (r.p >= 0.5) === r.won,   // did the predicted favorite actually win?
+    }));
+
+    // 5-bin calibration (50–60% … 90–100%) — track predicted (sum of p_i) for proper H-L E_k
+    const bins = Array.from({ length: 5 }, (_, i) => ({
+        label: `${50 + i * 10}–${60 + i * 10}%`, midpoint: 55 + i * 10,
+        actual: 0, predicted: 0, count: 0,
+    }));
+    for (const r of favResults) {
+        const b = Math.min(4, Math.floor((r.p - 0.5) * 10));
+        bins[b].actual    += r.won ? 1 : 0;
+        bins[b].predicted += r.p;
+        bins[b].count++;
+    }
+
+    // Summary stats (Brier score and accuracy are invariant to the favorite-folding)
+    const brier    = favResults.reduce((s, r) => s + (r.p - (r.won ? 1 : 0)) ** 2, 0) / favResults.length;
+    const accuracy = favResults.filter(r => r.won).length / favResults.length;
+
+    // Statistical tests (Spiegelhalter Z is also invariant to folding — proved in comments above)
+    const sp = btSpiegelhalter(favResults);
+    const hl = btHosmerLemeshow(bins);
+
+    // β_opt = Σ(y-0.5)(p-0.5) / Σ(p-0.5)² — also invariant to folding
+    let betaNum = 0, betaDenom = 0;
+    for (const { p, won } of favResults) {
+        betaNum   += ((won ? 1 : 0) - 0.5) * (p - 0.5);
+        betaDenom += (p - 0.5) ** 2;
+    }
+    const betaOpt = betaDenom > 0 ? Math.max(0.1, Math.min(2.0, betaNum / betaDenom)) : 1.0;
+    const betaCurrent = wlCalibrationBeta;
+
+    const pBadge = (p, label) => {
+        const [color, verdict] = p > 0.10 ? ['#22c55e', 'calibrated']
+                               : p > 0.05 ? ['#f59e0b', 'marginal']
+                               :            ['#ef4444', 'miscalibrated'];
+        const pStr = p < 0.001 ? '<0.001' : p.toFixed(3);
+        return `<span style="color:${color};font-weight:600">${verdict}</span> <span style="color:#64748b">(${label}, p = ${pStr})</span>`;
+    };
+
+    // Calibration table rows — each bucket gets a Wilson 95% CI bar
+    const rows = bins.map(b => {
+        if (!b.count) {
+            return `<tr><td style="color:#2d3f57;padding:5px 8px;font-size:0.82em">${b.label}</td>
+                <td colspan="3" style="color:#2d3f57;text-align:center;font-size:0.82em">—</td></tr>`;
+        }
+        const [lo, hi]  = btWilson(b.actual, b.count);
+        const actualPct = b.actual / b.count * 100;
+        const midInCI   = b.midpoint >= lo * 100 && b.midpoint <= hi * 100;
+        const barColor  = midInCI ? '#3b82f6' : '#f59e0b';
+
+        // 100px bar = 0–100%; CI band + actual tick + expected tick
+        const toBar = (pct) => Math.max(0, Math.min(100, Math.round(pct)));
+        const loW  = toBar(lo  * 100);
+        const hiW  = toBar(hi  * 100);
+        const actW = toBar(actualPct);
+        const midW = toBar(b.midpoint);
+        const bar = `<div style="position:relative;height:10px;width:100px;background:#1e293b;border-radius:3px;display:inline-block;vertical-align:middle;">
+            <div style="position:absolute;top:0;left:${loW}px;width:${Math.max(1,hiW-loW)}px;height:100%;background:${barColor};opacity:0.22;"></div>
+            <div style="position:absolute;top:0;left:${midW}px;width:1px;height:100%;background:#475569;"></div>
+            <div style="position:absolute;top:0;left:${Math.max(0,actW-1)}px;width:2px;height:100%;background:${barColor};border-radius:1px;"></div>
+        </div>`;
+        const ciText = `${(lo*100).toFixed(0)}–${(hi*100).toFixed(0)}%`;
+        const checkMark = midInCI
+            ? `<span style="color:#22c55e">✓</span>`
+            : `<span style="color:#f59e0b" title="Expected midpoint ${b.midpoint}% falls outside 95% CI">⚠</span>`;
+
+        return `<tr>
+            <td style="color:#94a3b8;padding:5px 8px;font-size:0.82em">${b.label}</td>
+            <td style="text-align:center;padding:5px 8px;font-size:0.82em">${b.count}</td>
+            <td style="padding:5px 8px">${bar}</td>
+            <td style="text-align:center;padding:5px 8px;font-size:0.82em;color:#94a3b8">${actualPct.toFixed(0)}% <span style="color:#475569">[${ciText}]</span></td>
+            <td style="text-align:center;padding:5px 8px;font-size:0.82em">${checkMark}</td>
+        </tr>`;
+    }).join('');
+
+    // Per-event summary pills
+    const evPills = eventRows.map(ev => {
+        if (ev.error) {
+            return `<span style="display:inline-flex;align-items:center;gap:5px;background:#1c0f0f;border:1px solid #7f1d1d;border-radius:4px;padding:2px 8px;font-size:0.78em;color:#fca5a5;">${ev.key} <span style="color:#64748b">— ${ev.error}</span></span>`;
+        }
+        return `<span style="display:inline-flex;align-items:center;gap:5px;background:#0c1929;border:1px solid #1e3a5f;border-radius:4px;padding:2px 8px;font-size:0.78em;color:#93c5fd;">${ev.key} <span style="color:#475569">${ev.count} matches</span></span>`;
+    }).join(' ');
+
+    resultsEl.innerHTML = `
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">${evPills}</div>
+        <div style="display:flex;gap:24px;margin-bottom:14px;flex-wrap:wrap;">
+            <div><span style="color:#64748b;font-size:0.82em;">Matches tested</span><br><b style="font-size:1.1em">${results.length}</b></div>
+            <div><span style="color:#64748b;font-size:0.82em;">Accuracy</span><br><b style="font-size:1.1em">${(accuracy * 100).toFixed(0)}%</b></div>
+            <div><span style="color:#64748b;font-size:0.82em;">Brier score</span><br><b style="font-size:1.1em">${brier.toFixed(3)}</b><span style="color:#475569;font-size:0.79em;margin-left:5px;">(random = 0.25)</span></div>
+        </div>
+        <div style="background:#0c1929;border:1px solid #1e293b;border-radius:7px;padding:12px 14px;margin-bottom:14px;font-size:0.83em;line-height:1.9;">
+            <div>Spiegelhalter Z = ${sp.z.toFixed(2)} &nbsp;→&nbsp; ${pBadge(sp.p, 'no binning')}
+                <span style="color:#475569;font-size:0.9em;margin-left:6px;">
+                    ${sp.z > 0 ? '(overconfident — probabilities too extreme)' : '(underconfident — probabilities too conservative)'}
+                </span>
+            </div>
+            <div>Hosmer-Lemeshow C = ${hl.C.toFixed(2)}, df = ${hl.df} &nbsp;→&nbsp; ${pBadge(hl.p, 'bin-based χ²')}</div>
+        </div>
+        <div style="background:#0c1929;border:1px solid #1e3a5f;border-radius:7px;padding:12px 14px;margin-bottom:14px;font-size:0.83em;">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                <div>
+                    <span style="color:#64748b;">Optimal calibration β</span>
+                    <b style="margin-left:6px;font-size:1.05em;color:${betaOpt < 0.97 ? '#f59e0b' : betaOpt > 1.03 ? '#60a5fa' : '#22c55e'}">${betaOpt.toFixed(3)}</b>
+                    <span style="color:#475569;margin-left:6px;font-size:0.9em;">
+                        ${betaOpt < 0.97 ? 'shrinks probabilities toward 50%' : betaOpt > 1.03 ? 'sharpens probabilities away from 50%' : 'no adjustment needed'}
+                    </span>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                    <button onclick="applyWLCalibration(${betaOpt.toFixed(4)})"
+                        style="background:#1e3a5f;color:#93c5fd;border:1px solid #2563eb;border-radius:5px;padding:4px 12px;font-size:0.85em;font-weight:600;cursor:pointer;">
+                        Apply β = ${betaOpt.toFixed(3)} to Watch List
+                    </button>
+                    ${betaCurrent !== 1.0 ? `<button onclick="applyWLCalibration(1.0)"
+                        style="background:#1a1a2e;color:#64748b;border:1px solid #334155;border-radius:5px;padding:4px 12px;font-size:0.85em;cursor:pointer;">
+                        Reset (currently β = ${betaCurrent.toFixed(3)})
+                    </button>` : ''}
+                </div>
+            </div>
+            <p style="color:#475569;font-size:0.85em;margin:8px 0 0;line-height:1.5;">
+                β = Σ(y−½)(p−½) / Σ(p−½)² — OLS estimate of the true calibration slope.
+                Applying it corrects systematic over/underconfidence without changing the model's ranking of matches.
+            </p>
+        </div>
+        <table style="width:100%;border-collapse:collapse;">
+            <thead>
+                <tr style="color:#475569;font-size:0.78em;text-align:left;border-bottom:1px solid #1e293b;">
+                    <th style="padding:5px 8px;">Predicted Favorite Win%</th>
+                    <th style="text-align:center;padding:5px 8px;">n</th>
+                    <th style="padding:5px 8px;">Actual rate <span style="font-weight:400;color:#334155;">(95% CI band)</span></th>
+                    <th style="text-align:center;padding:5px 8px;">Actual [95% CI]</th>
+                    <th style="text-align:center;padding:5px 8px;">Expected in CI?</th>
+                </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+        </table>
+        <p style="color:#475569;font-size:0.79em;margin-top:12px;line-height:1.6;">
+            Predictions are folded to the favorite's perspective (favP = max(redP, blueP)), doubling the effective sample per bucket.
+            The bar shows a 95% Wilson CI (shaded) with the actual win rate (solid tick) and expected midpoint (gray tick).
+            ✓ = the expected midpoint falls inside the CI. Spiegelhalter Z and β are invariant to this folding.
+        </p>`;
+};
+
+window.toggleAlgoSection = function (id) {
+    const body  = document.getElementById(id);
+    const arrow = document.getElementById(id + '-arrow');
+    if (!body) return;
+    const collapsed = body.style.display === 'none';
+    body.style.display  = collapsed ? '' : 'none';
+    if (arrow) arrow.textContent = collapsed ? '▼' : '▶';
+};
+
+window.toggleWLSection = function (section) {
+    if (section === 'standings') {
+        wlStandingsCollapsed = !wlStandingsCollapsed;
+        document.getElementById('wl-standings-body').style.display = wlStandingsCollapsed ? 'none' : '';
+        document.getElementById('wl-standings-arrow').textContent = wlStandingsCollapsed ? '▶' : '▼';
+    } else if (section === 'your') {
+        wlYourCollapsed = !wlYourCollapsed;
+        document.getElementById('wl-your-matches').style.display = wlYourCollapsed ? 'none' : '';
+        document.getElementById('wl-your-arrow').textContent = wlYourCollapsed ? '▶' : '▼';
+    } else {
+        wlOtherCollapsed = !wlOtherCollapsed;
+        document.getElementById('wl-other-matches').style.display = wlOtherCollapsed ? 'none' : '';
+        document.getElementById('wl-other-arrow').textContent = wlOtherCollapsed ? '▶' : '▼';
+    }
 };
 
 function pushCurrentRightPanel() {
@@ -4510,15 +5735,18 @@ window.sortPickListBy = function (col) {
 
 window.switchToolsTab = function (tab) {
     currentToolsTab = tab;
-    ['picklist', 'draft', 'field'].forEach(t => {
+    const allTabs = ['picklist', 'draft', 'field', 'alliances', 'dev'];
+    allTabs.forEach(t => {
         document.getElementById(`tools-tab-${t}`).style.display = t === tab ? 'block' : 'none';
     });
     document.querySelectorAll('#toolsTabs .detail-tab-btn').forEach((btn, i) => {
-        btn.classList.toggle('active', ['picklist', 'draft', 'field'][i] === tab);
+        btn.classList.toggle('active', allTabs[i] === tab);
     });
     if (tab === 'picklist') renderPickList();
     if (tab === 'draft') renderDraft();
     if (tab === 'field') initFieldTab();
+    if (tab === 'alliances') renderAlliancesTab();
+    if (tab === 'dev') renderDevTab();
 };
 
 // ── Field Drawing Tab ────────────────────────────────────────────────────────
@@ -4818,7 +6046,7 @@ async function renderPickList() {
     ]);
 
     if (!allTeams.length) {
-        if (statusEl) statusEl.textContent = 'No team data — sync Statbotics first.';
+        if (statusEl) statusEl.textContent = 'No team data — sync Statbotics (History or Live) first.';
         table.style.display = 'none';
         return;
     }
@@ -5314,6 +6542,330 @@ window.draftPick = function (teamNumber) {
     renderDraft();
 };
 
+async function renderDevTab() {
+    const el = document.getElementById('tools-tab-dev');
+    if (!el) return;
+    el.innerHTML = `<div style="color:#94a3b8;padding:12px;">Loading…</div>`;
+    const eventKey = (document.getElementById('eventKeyInput')?.value ?? '').trim().toLowerCase();
+    const sources = [];
+
+    const teams    = await db.teams.toArray();
+    const tbaTeams = await db.tbaTeams.toArray();
+    const matches  = await db.matches.toArray();
+    if (teams.length)    sources.push({ name: `db.teams (${teams.length} records)`,    ex: teams[0] });
+    if (tbaTeams.length) sources.push({ name: `db.tbaTeams (${tbaTeams.length} records)`, ex: tbaTeams[0] });
+    if (matches.length)  sources.push({ name: `db.matches (${matches.length} records)`,  ex: matches[0] });
+
+    if (eventKey) {
+        for (const [lsKey, label] of [
+            [`scoutingData_${eventKey}`, 'Scouting data'],
+            [`pitData_${eventKey}`, 'Pit data'],
+        ]) {
+            try {
+                const rows = JSON.parse(localStorage.getItem(lsKey) ?? 'null');
+                if (Array.isArray(rows) && rows.length) sources.push({ name: `${label} (${rows.length} rows)`, ex: rows[0] });
+            } catch {}
+        }
+    }
+
+    const renderValue = (v, depth = 0) => {
+        if (v == null) return '<span style="color:#475569;">—</span>';
+        if (typeof v !== 'object') return `<span style="color:#64748b;">${String(v)}</span>`;
+        const entries = Object.entries(v);
+        if (!entries.length) return '<span style="color:#475569;">{}</span>';
+        const preview = JSON.stringify(v);
+        const short = preview.length <= 60 ? `<span style="color:#475569;font-size:0.9em;">${preview}</span>` : `<span style="color:#475569;font-size:0.9em;">${preview.slice(0, 60)}…</span>`;
+        if (depth >= 2) return short;
+        const inner = entries.map(([k2, v2]) => `
+            <tr style="border-bottom:1px solid #0a0f1a;">
+                <td style="padding:2px 8px 2px 16px;color:#64748b;white-space:nowrap;font-size:13px;">${k2}</td>
+                <td style="padding:2px 8px;font-size:13px;font-family:monospace;word-break:break-all;max-width:340px;">${renderValue(v2, depth + 1)}</td>
+            </tr>`).join('');
+        return `<details style="display:inline-block;max-width:100%;">
+            <summary style="cursor:pointer;color:#475569;font-size:0.85em;list-style:none;white-space:nowrap;">▶ ${short}</summary>
+            <table style="border-collapse:collapse;width:100%;background:#040810;">${inner}</table>
+        </details>`;
+    };
+    const renderSource = ({ name, ex }) => {
+        const rows = Object.entries(ex).map(([k, v]) => `
+            <tr style="border-bottom:1px solid #0f172a;">
+                <td style="padding:3px 8px;color:#94a3b8;white-space:nowrap;font-size:14px;">${k}</td>
+                <td style="padding:3px 8px;font-size:14px;font-family:monospace;word-break:break-all;max-width:360px;">${renderValue(v)}</td>
+            </tr>`).join('');
+        return `<details style="margin-bottom:8px;border:1px solid #1e293b;border-radius:6px;overflow:hidden;">
+            <summary style="cursor:pointer;color:#e2e8f0;font-weight:600;padding:8px 12px;background:#0f172a;font-size:0.9em;">
+                ${name}
+            </summary>
+            <table style="border-collapse:collapse;width:100%;background:#080d16;">${rows}</table>
+        </details>`;
+    };
+
+    const fieldExplorerHtml = `
+        <details style="margin-bottom:16px;border:1px solid #1e293b;border-radius:8px;overflow:hidden;">
+            <summary style="cursor:pointer;color:#e2e8f0;font-weight:700;padding:10px 14px;background:#0f172a;font-size:1em;letter-spacing:0.02em;">
+                Field Explorer
+            </summary>
+            <div style="padding:10px;">
+                ${sources.length ? sources.map(renderSource).join('') : '<div style="color:#64748b;padding:4px 0;">No data loaded yet. Sync data first.</div>'}
+            </div>
+        </details>`;
+
+    const tmInputId  = 'devTimeMachineInput';
+    const tmStatusId = 'devTimeMachineStatus';
+    const timeMachineHtml = `
+        <details open style="border:1px solid #1e293b;border-radius:8px;overflow:hidden;">
+            <summary style="cursor:pointer;color:#e2e8f0;font-weight:700;padding:10px 14px;background:#0f172a;font-size:1em;letter-spacing:0.02em;">
+                Time Machine
+            </summary>
+            <div style="padding:14px;">
+                <p style="color:#94a3b8;font-size:0.85em;margin:0 0 12px;line-height:1.6;">
+                    Roll data back to the state after a specific qual match completed.
+                    Scrubs scores and breakdowns for later matches from TBA, filters Statbotics
+                    match history, and trims scouting entries. The schedule stays intact.
+                    <strong style="color:#fbbf24;">You will need to re-sync all sources afterward.</strong>
+                </p>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                    <label style="color:#94a3b8;font-size:0.85em;">After qual match #</label>
+                    <input id="${tmInputId}" type="number" min="1" step="1" placeholder="e.g. 12"
+                        style="width:80px;padding:4px 8px;background:#0f172a;border:1px solid #334155;color:#f8fafc;border-radius:4px;font-size:0.9em;">
+                    <button onclick="applyTimeMachineSnapshot()"
+                        style="padding:5px 14px;background:#334155;color:#f8fafc;border:1px solid #475569;border-radius:5px;cursor:pointer;font-size:0.85em;font-weight:600;">
+                        Roll back
+                    </button>
+                </div>
+                <div id="${tmStatusId}" style="margin-top:10px;font-size:0.82em;color:#64748b;"></div>
+            </div>
+        </details>`;
+
+    el.innerHTML = `<div style="padding:12px;">${fieldExplorerHtml}${timeMachineHtml}</div>`;
+}
+
+window.applyTimeMachineSnapshot = async function () {
+    const statusEl = document.getElementById('devTimeMachineStatus');
+    const inputEl  = document.getElementById('devTimeMachineInput');
+    const cutoff   = parseInt(inputEl?.value ?? '');
+    if (isNaN(cutoff) || cutoff < 0) {
+        if (statusEl) statusEl.innerHTML = '<span style="color:#f87171;">Enter a valid match number (≥ 0).</span>';
+        return;
+    }
+    const eventKey = (document.getElementById('eventKeyInput')?.value ?? '').trim().toLowerCase();
+    if (!eventKey) {
+        if (statusEl) statusEl.innerHTML = '<span style="color:#f87171;">Set an event key first.</span>';
+        return;
+    }
+    if (statusEl) statusEl.innerHTML = '<span style="color:#94a3b8;">Applying…</span>';
+
+    let matchesReset = 0, teamsUpdated = 0, scoutRows = 0, timesUpdated = 0;
+
+    // ── 1. Roll back db.matches: erase scores for qual matches > cutoff ──────
+    const allMatches = await db.matches.toArray();
+    const sortedAll  = [...allMatches].sort((a, b) => (a.matchNumber ?? 0) - (b.matchNumber ?? 0));
+
+    for (const m of allMatches) {
+        if ((m.matchNumber ?? 0) > cutoff && (m.redScore ?? -1) >= 0) {
+            await db.matches.update(m.key, { redScore: -1, blueScore: -1, redBreakdown: null, blueBreakdown: null });
+            matchesReset++;
+        }
+    }
+
+    // ── 2. Set future predictedTime on post-cutoff matches ────────────────────
+    const playedSorted = sortedAll.filter(m => (m.matchNumber ?? 0) <= cutoff && (m.redScore ?? -1) >= 0);
+    const postCutoff   = sortedAll.filter(m => (m.matchNumber ?? 0) > cutoff);
+    if (postCutoff.length) {
+        let gap = 480;
+        if (playedSorted.length >= 2) {
+            const last = playedSorted[playedSorted.length - 1];
+            const prev = playedSorted[playedSorted.length - 2];
+            const tLast = last.predictedTime ?? last.time;
+            const tPrev = prev.predictedTime ?? prev.time;
+            if (tLast && tPrev && tLast > tPrev) gap = Math.max(300, Math.min(900, tLast - tPrev));
+        }
+        const lastPlayed = playedSorted[playedSorted.length - 1];
+        let t = (lastPlayed?.predictedTime ?? lastPlayed?.time ?? Math.floor(Date.now() / 1000)) + gap;
+        for (const m of postCutoff) {
+            await db.matches.update(m.key, { predictedTime: t });
+            t += gap;
+            timesUpdated++;
+        }
+    }
+
+    // ── 3. Roll back db.teams: filter rawStatboticsData for this event ────────
+    const allTeams = await db.teams.toArray();
+    for (const team of allTeams) {
+        const raw = team.rawStatboticsData ?? [];
+        const filtered = raw.filter(m => {
+            if (!m.match?.startsWith(eventKey + '_qm')) return true;
+            const n = parseInt(m.match.slice(eventKey.length + 3));
+            return isNaN(n) || n <= cutoff;
+        });
+        if (filtered.length === raw.length) continue;
+        const played = filtered.filter(m => m.event === eventKey && m.epa?.post != null);
+        const latestEPA = played.length ? played[played.length - 1].epa.post : team.currentEPA;
+        await db.teams.update(team.teamNumber, { rawStatboticsData: filtered, currentEPA: latestEPA });
+        teamsUpdated++;
+    }
+
+    // ── 4. Roll back scouting localStorage data (trim by match number) ────────
+    try {
+        const lsKey = `scoutingData_${eventKey}`;
+        const rows = JSON.parse(localStorage.getItem(lsKey) ?? 'null');
+        if (Array.isArray(rows)) {
+            const before = rows.length;
+            const kept = rows.filter(r => (r.matchNumber ?? 0) <= cutoff);
+            scoutRows = before - kept.length;
+            localStorage.setItem(lsKey, JSON.stringify(kept));
+        }
+    } catch {}
+
+    // ── 5. Clear all event-scoped sync-state localStorage keys ───────────────
+    for (const key of [
+        `pitData_${eventKey}`,
+        `tbaAlliances_${eventKey}`,
+        `scoutingFusedStats_${eventKey}`,
+        `archiveCoverage_${eventKey}`,
+        `wlPreEventSnapshot_${eventKey}`,
+    ]) localStorage.removeItem(key);
+    // Draft state (not scoped to event but reflects post-draft selections)
+    localStorage.removeItem('realDraftState');
+
+    // ── 6. Reset module-level caches and dirty flags ──────────────────────────
+    wlDetailCache       = null;
+    wlPreEventCache     = null;
+    watchListDirty      = true;
+    wlMatchesRenderedFor = null;
+
+    const parts = [
+        `reset ${matchesReset} match score${matchesReset !== 1 ? 's' : ''}`,
+        `set ${timesUpdated} future timestamp${timesUpdated !== 1 ? 's' : ''}`,
+        `updated ${teamsUpdated} team${teamsUpdated !== 1 ? 's' : ''} in Statbotics history`,
+        scoutRows ? `removed ${scoutRows} scouting row${scoutRows !== 1 ? 's' : ''}` : null,
+    ].filter(Boolean).join(', ');
+    if (statusEl) statusEl.innerHTML =
+        `<span style="color:#4ade80;">✓ Done — ${parts}. ` +
+        `Re-sync OPR, TBA Matches, and Statbotics to restore live data.</span>`;
+};
+
+async function renderAlliancesTab() {
+    const el = document.getElementById('tools-tab-alliances');
+    if (!el) return;
+    el.innerHTML = `<div style="color:#94a3b8;padding:12px;">Loading…</div>`;
+
+    const eventKey = (document.getElementById('eventKeyInput')?.value ?? '').trim().toLowerCase();
+    const gameConfig = eventKey ? getGameConfig(eventKey) : null;
+    if (!gameConfig) {
+        el.innerHTML = `<div style="color:#64748b;padding:12px;">Set an event key first.</div>`;
+        return;
+    }
+
+    const [allTeamsArr, tbaTeamsArr, matchesArr] = await Promise.all([
+        db.teams.toArray(), db.tbaTeams.toArray(), db.matches.toArray()
+    ]);
+    const teamsMap = Object.fromEntries(allTeamsArr.map(t => [t.teamNumber, t]));
+    const tbaMap   = Object.fromEntries(tbaTeamsArr.map(t => [t.teamNumber, t]));
+    const playedMatches = matchesArr.filter(m => (m.redScore ?? -1) >= 0);
+    const { relResiduals, diffResiduals } = wlCollectResiduals(playedMatches, tbaMap, teamsMap);
+    const oprWeight = Math.min(1, playedMatches.length / 30);
+    const avg = allTeamsArr.reduce((s, t) => s + (t.currentEPA ?? 0), 0) / (allTeamsArr.length || 1);
+    const effectiveThresholds = getEffectiveThresholds(gameConfig, eventKey);
+
+    // Load alliance data: prefer TBA alliances, fall back to draft state
+    let alliances = null;
+    let source = '';
+    const tbaRaw = localStorage.getItem(`tbaAlliances_${eventKey}`);
+    if (tbaRaw) {
+        try {
+            alliances = JSON.parse(tbaRaw).map((a, i) => ({
+                num: i + 1,
+                teams: (a.picks ?? []).map(p => parseInt(p.replace('frc', ''))).filter(Boolean),
+            }));
+            source = 'TBA Alliances';
+        } catch {}
+    }
+    if (!alliances) {
+        const draft = loadDraftState();
+        if (draft?.alliances) {
+            alliances = draft.alliances.map((a, i) => ({
+                num: i + 1,
+                teams: [a.captain, a.pick1, a.pick2].filter(Boolean).map(Number),
+            })).filter(a => a.teams.length > 0);
+            source = 'Draft';
+        }
+    }
+    if (!alliances || !alliances.length) {
+        el.innerHTML = `<div style="color:#64748b;padding:12px;">
+            No alliance data found. Load TBA alliances (Draft → Real Alliances → Load from TBA) or build a mock draft first.
+        </div>`;
+        return;
+    }
+
+    // Compute scores for all alliances first (needed for color coding and win%)
+    const allianceData = alliances.map(({ num, teams }) => {
+        const score    = wlAlliancePredictedScore(teams, tbaMap, teamsMap, avg, oprWeight);
+        const sigmaRel = wlAllianceSigmaRel(teams, teamsMap, score);
+        const sigma    = sigmaRel * score;
+        return { num, teams, score, sigma };
+    });
+
+    // Expected average across all alliances (for color coding like draft tab)
+    const expectedAvg = allianceData.reduce((s, a) => s + a.score, 0) / (allianceData.length || 1);
+
+    // Find which alliance (if any) contains 1768
+    const ownAlliance = allianceData.find(a => a.teams.map(String).includes(OWN_TEAM));
+
+    const winPctHeader = ownAlliance
+        ? `<th style="padding:6px 8px;text-align:center;font-size:0.82em;color:#fbbf24;">Win% vs Them</th>` : '';
+
+    const rows = allianceData.map(({ num, teams, score, sigma }) => {
+        const pct = expectedAvg > 0 ? (score - expectedAvg) / expectedAvg : 0;
+        const scoreColor = pct > 0.12 ? '#4ade80' : pct > 0.04 ? '#a3e635' : pct > -0.04 ? '#f8fafc' : pct > -0.12 ? '#fb923c' : '#ef4444';
+
+        const teamLinks = teams.map(tn =>
+            `<span onclick="viewTeamDetail(${tn},'overview')" style="cursor:pointer;color:#93c5fd;margin-right:6px;">${tn}</span>`
+        ).join('');
+
+        let winPctCell = '';
+        if (ownAlliance) {
+            if (ownAlliance.num === num) {
+                winPctCell = `<td style="padding:6px 8px;text-align:center;color:#475569;font-size:0.8em;">—</td>`;
+            } else {
+                const own = ownAlliance;
+                const diffSigma = Math.sqrt(own.sigma * own.sigma + sigma * sigma);
+                const z = diffSigma > 0 ? (own.score - score) / diffSigma : 0;
+                const prob = Math.round(btNormalCDF(z) * 100);
+                const wColor = prob > 60 ? '#4ade80' : prob > 40 ? '#fbbf24' : '#f87171';
+                winPctCell = `<td style="padding:6px 8px;text-align:center;color:${wColor};font-weight:600;">${prob}%</td>`;
+            }
+        }
+
+        return `<tr style="border-bottom:1px solid #1e293b;${ownAlliance?.num === num ? 'background:#0f1e30;' : ''}">
+            <td style="padding:6px 8px;text-align:center;color:#94a3b8;font-weight:700;">${num}</td>
+            <td style="padding:6px 8px;">${teamLinks || '<span style="color:#475569;">—</span>'}</td>
+            <td style="padding:6px 8px;text-align:center;color:${scoreColor};font-weight:700;">${score.toFixed(1)}</td>
+            <td style="padding:6px 8px;text-align:center;color:#64748b;">±${sigma.toFixed(1)}</td>
+            ${winPctCell}
+        </tr>`;
+    }).join('');
+
+    el.innerHTML = `<div style="padding:12px;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
+            <h3 style="color:#e2e8f0;margin:0;">Alliance Estimates</h3>
+            <span style="color:#64748b;font-size:0.82em;">Source: ${source} · ${playedMatches.length} played matches · EPA/OPR blend ${Math.round(oprWeight*100)}% OPR</span>
+        </div>
+        <div style="overflow-x:auto;">
+        <table style="border-collapse:collapse;width:100%;min-width:400px;">
+            <thead><tr style="border-bottom:2px solid #334155;">
+                <th style="padding:6px 8px;text-align:center;font-size:0.82em;color:#94a3b8;">#</th>
+                <th style="padding:6px 8px;font-size:0.82em;color:#94a3b8;">Teams</th>
+                <th style="padding:6px 8px;text-align:center;font-size:0.82em;color:#94a3b8;">Exp. Score</th>
+                <th style="padding:6px 8px;text-align:center;font-size:0.82em;color:#94a3b8;">±SD</th>
+                ${winPctHeader}
+            </tr></thead>
+            <tbody>${rows}</tbody>
+        </table>
+        </div>
+    </div>`;
+}
+
 async function renderDraft() {
     const allianceBody = document.getElementById('draftAllianceBody');
     const pickPanel = document.getElementById('draftPickPanel');
@@ -5323,7 +6875,7 @@ async function renderDraft() {
     const [allTeams, allMatches, allTBATeams] = await Promise.all([db.teams.toArray(), db.matches.toArray(), db.tbaTeams.toArray()]);
 
     if (!allTeams.length) {
-        if (statusEl) statusEl.textContent = 'No team data — sync Statbotics first.';
+        if (statusEl) statusEl.textContent = 'No team data — sync Statbotics (History or Live) first.';
         allianceBody.innerHTML = '';
         pickPanel.innerHTML = '<p style="color:#64748b;font-size:0.9em;padding:12px;">No data.</p>';
         return;
@@ -5568,10 +7120,13 @@ window.goBack = function () {
 
 let performanceChart = null;
 let matchesChartInstance = null;
+let rpTimelineChart = null;
+let wlMatchesRenderedFor = null;
 let activeTeamNumber = null;
 let activeTeamData = null;
 let activeTBAData = null;
 let lastDetailTab = 'overview';
+let lastDetailDataSubTab = 'epa';
 
 const PHOTO_STYLE = 'width:220px; min-width:220px; height:auto; max-height:320px; object-fit:contain; border-radius:8px; border:1px solid #334155; background:#0f172a; display:block;';
 
@@ -5851,8 +7406,13 @@ function renderPitTab(teamNumber) {
 }
 
 window.switchDetailTab = async function (tab) {
+    // Destroy RP timeline chart when navigating away from Matches tab
+    if (lastDetailTab === 'matches' && tab !== 'matches') {
+        if (rpTimelineChart) { rpTimelineChart.destroy(); rpTimelineChart = null; }
+        wlMatchesRenderedFor = null;
+    }
     lastDetailTab = tab;
-    const tabs = ['overview', 'epa-opr', 'scouting', 'pit-data'];
+    const tabs = ['overview', 'matches', 'data'];
     tabs.forEach(t => {
         document.getElementById(`tab-${t}`).style.display = t === tab ? 'block' : 'none';
     });
@@ -5862,17 +7422,242 @@ window.switchDetailTab = async function (tab) {
     if (tab === 'overview' && activeTeamData) {
         await renderOverview(activeTeamData, activeTBAData);
     }
-    if (tab === 'epa-opr' && activeTeamData) {
+    if (tab === 'matches' && activeTeamData) {
+        await renderWLMatchesTab(activeTeamData.teamNumber);
+    }
+    if (tab === 'data' && activeTeamData) {
+        await switchDetailDataSubTab(lastDetailDataSubTab);
+    }
+};
+
+window.switchDetailDataSubTab = async function (tab) {
+    lastDetailDataSubTab = tab;
+    const panes = { epa: 'tab-epa-opr', scouting: 'tab-scouting', pit: 'tab-pit-data' };
+    Object.entries(panes).forEach(([k, id]) => {
+        document.getElementById(id).style.display = k === tab ? '' : 'none';
+    });
+    document.querySelectorAll('#dataSubTabs .detail-tab-btn').forEach((btn, i) => {
+        btn.classList.toggle('active', ['epa', 'scouting', 'pit'][i] === tab);
+    });
+    if (tab === 'epa' && activeTeamData) {
         renderChart(activeTeamData);
         await renderTBADetail(activeTeamData.teamNumber, activeTBAData);
-    }
-    if (tab === 'scouting' && activeTeamData) {
+    } else if (tab === 'scouting' && activeTeamData) {
         await renderScoutingTab(activeTeamData.teamNumber);
-    }
-    if (tab === 'pit-data' && activeTeamData) {
+    } else if (tab === 'pit' && activeTeamData) {
         renderPitTab(activeTeamData.teamNumber);
     }
 };
+
+async function renderWLMatchesTab(teamNumber) {
+    if (wlMatchesRenderedFor === teamNumber) return;
+    const tableContainer = document.getElementById('matches-tab-table');
+    if (!tableContainer) return;
+
+    if (!wlDetailCache) {
+        tableContainer.innerHTML = `<p style="color:#64748b;font-style:italic;margin-top:24px;text-align:center;">Computing predictions…</p>`;
+        await renderWatchList();   // populates wlDetailCache as a side effect
+        if (!wlDetailCache) {
+            tableContainer.innerHTML = `<p style="color:#64748b;font-style:italic;margin-top:24px;text-align:center;">No schedule loaded — sync TBA matches first.</p>`;
+            if (rpTimelineChart) { rpTimelineChart.destroy(); rpTimelineChart = null; }
+            return;
+        }
+    }
+
+    const { allMatches, matchPredictions, baseRP, playedMatches, effectiveThresholds,
+            tbaMap, allTeamNums, relResiduals, diffResiduals, fuelOPRCache, gameConfig } = wlDetailCache;
+    const tnStr = String(teamNumber);
+    const playedKeys = new Set(playedMatches.map(m => m.key));
+    const thresholds = effectiveThresholds.filter(r => r.threshold != null);
+
+    const teamMatches = allMatches
+        .filter(m => m.red?.includes(tnStr) || m.blue?.includes(tnStr))
+        .sort((a, b) => a.matchNumber - b.matchNumber);
+
+    if (!teamMatches.length) {
+        tableContainer.innerHTML = `<p style="color:#64748b;font-style:italic;margin-top:24px;text-align:center;">No matches found for team ${teamNumber}.</p>`;
+        return;
+    }
+
+    // Build predictions for ALL matches (played + unplayed) so we can chart expected RP
+    const allPredictions = { ...matchPredictions };
+    for (const m of teamMatches) {
+        if (!allPredictions[m.key]) {
+            allPredictions[m.key] = wlSimulateMatch(
+                m, tbaMap, wlDetailCache.teamsMap, allTeamNums,
+                relResiduals, diffResiduals, gameConfig, effectiveThresholds, playedMatches, fuelOPRCache
+            );
+        }
+    }
+
+    // ── RP Timeline Chart ─────────────────────────────────────────────────────
+    const labels = teamMatches.map(m => `Q${m.matchNumber}`);
+    let cumDiff = 0;
+    const diffData = [];
+    for (const m of teamMatches) {
+        const isRed  = m.red?.includes(tnStr);
+        const pred   = allPredictions[m.key];
+        const winP   = pred ? (isRed ? pred.redProb : pred.blueProb) : 0.5;
+        const tieP   = pred?.tieProb ?? 0;
+        const rpProbs = pred ? (isRed ? pred.rpProbs.red : pred.rpProbs.blue) : {};
+        const expRP  = winP * 3 + tieP * 1 + thresholds.reduce((s, r) => s + (rpProbs[r.rpField] ?? 0), 0);
+
+        if (playedKeys.has(m.key)) {
+            const bd  = isRed ? m.redBreakdown : m.blueBreakdown;
+            const myS = isRed ? m.redScore : m.blueScore;
+            const opS = isRed ? m.blueScore : m.redScore;
+            const winRP  = myS > opS ? 3 : myS === opS ? 1 : 0;
+            const bonusRP = thresholds.filter(r => bd?.[r.rpField]).length;
+            cumDiff += (winRP + bonusRP) - expRP;
+            diffData.push(+cumDiff.toFixed(2));
+        } else {
+            diffData.push(null);
+        }
+    }
+
+    if (rpTimelineChart) { rpTimelineChart.destroy(); rpTimelineChart = null; }
+    const canvas = document.getElementById('rpTimelineChart');
+    if (canvas) {
+        rpTimelineChart = new Chart(canvas.getContext('2d'), {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [{
+                    label: 'RP vs. Expected',
+                    data: diffData,
+                    borderColor: diffData.at(diffData.filter(v => v !== null).length - 1) >= 0 ? '#22c55e' : '#ef4444',
+                    backgroundColor: 'rgba(100,116,139,0.08)',
+                    borderWidth: 2,
+                    pointRadius: 3,
+                    tension: 0.2,
+                    spanGaps: false,
+                    fill: { target: { value: 0 }, above: 'rgba(34,197,94,0.1)', below: 'rgba(239,68,68,0.1)' },
+                }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { labels: { color: '#94a3b8', font: { size: 11 } } },
+                    tooltip: { mode: 'index', intersect: false },
+                },
+                scales: {
+                    x: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: '#1e293b' } },
+                    y: {
+                        ticks: { color: '#64748b' },
+                        grid: {
+                            color: ctx => ctx.tick.value === 0 ? '#475569' : '#1e293b',
+                        },
+                        title: { display: true, text: 'Cumulative RP vs. Expected', color: '#64748b', font: { size: 10 } },
+                    },
+                },
+            },
+        });
+    }
+
+    // ── Match Table ───────────────────────────────────────────────────────────
+    const thHeaders = thresholds.map(r =>
+        `<th style="padding:4px 8px;text-align:center;">${r.label.replace(' RP', '')}</th>`).join('');
+
+    const preMatchPreds = wlPreEventCache?.matchPredictions ?? {};
+
+    let totalWins = 0, totalActRP = 0, totalExpRP = 0;
+    const rows = teamMatches.map(m => {
+        const isRed  = m.red?.includes(tnStr);
+        const allies = (isRed ? m.red : m.blue).filter(t => t !== tnStr).join(' · ');
+        const label  = isRed ? 'RED' : 'BLU';
+        const lColor = isRed ? '#ef4444' : '#60a5fa';
+        const pred   = allPredictions[m.key];
+        const prePred = preMatchPreds[m.key];
+        const preWinP = prePred ? (isRed ? prePred.redProb : prePred.blueProb) : null;
+        const preWinPct = preWinP != null ? Math.round(preWinP * 100) : null;
+        const preLine = preWinPct != null
+            ? `<div style="font-size:0.75em;color:#475569;margin-top:1px;" title="Pre-event baseline — frozen at first load using EPA only. May differ from live if data was re-synced or OPR became available.">pre: ${preWinPct}%</div>`
+            : '';
+        const winP   = pred ? (isRed ? pred.redProb : pred.blueProb) : null;
+        const rpProbs = pred ? (isRed ? pred.rpProbs.red : pred.rpProbs.blue) : {};
+        const expWinRP   = pred ? (winP * 3 + pred.tieProb * 1) : null;
+        const expBonusRP = pred ? thresholds.reduce((s, r) => s + (rpProbs[r.rpField] ?? 0), 0) : null;
+        const expTotal   = expWinRP != null ? expWinRP + expBonusRP : null;
+        const winPct = winP != null ? Math.round(winP * 100) : null;
+        if (expTotal != null) totalExpRP += expTotal;
+
+        const pColor = (pct) => pct >= 60 ? '#22c55e' : pct >= 35 ? '#f59e0b' : '#64748b';
+
+        if (playedKeys.has(m.key)) {
+            const bd   = isRed ? m.redBreakdown : m.blueBreakdown;
+            const myS  = isRed ? m.redScore  : m.blueScore;
+            const opS  = isRed ? m.blueScore : m.redScore;
+            const won  = myS > opS, tied = myS === opS;
+            const winRP   = won ? 3 : tied ? 1 : 0;
+            const bonusRP = thresholds.filter(r => bd?.[r.rpField]).length;
+            const actTotal = winRP + bonusRP;
+            if (won) totalWins++;
+            totalActRP += actTotal;
+            const resultMark = won ? '✓' : tied ? '–' : '✗';
+            const resultColor = won ? '#22c55e' : tied ? '#f59e0b' : '#64748b';
+            const winCell = `<td style="padding:4px 8px;text-align:center;">
+                ${winPct != null ? `<span style="color:${pColor(winPct)}">${winPct}%</span> ` : ''}
+                <span style="color:${resultColor};font-weight:700;">${resultMark}</span>
+                ${preLine}
+            </td>`;
+            const thCells = thresholds.map(r => {
+                const p   = rpProbs[r.rpField];
+                const hit = bd?.[r.rpField];
+                const pStr = p != null ? `<span style="color:${pColor(Math.round(p*100))};font-size:0.8em;">${Math.round(p*100)}%</span> ` : '';
+                return `<td style="padding:4px 8px;text-align:center;">${pStr}<span style="color:${hit ? '#22c55e' : '#475569'};font-weight:700;">${hit ? '✓' : '✗'}</span></td>`;
+            }).join('');
+            const expStr = expTotal != null ? `${expTotal.toFixed(1)} ` : '';
+            return `<tr style="border-bottom:1px solid #1e293b;">
+                <td style="padding:4px 8px;text-align:center;color:#94a3b8;">Q${m.matchNumber}</td>
+                <td style="padding:4px 8px;text-align:center;font-size:0.8em;font-weight:700;color:${lColor};">${label}</td>
+                <td style="padding:4px 8px;color:#94a3b8;font-size:0.82em;">${allies}</td>
+                ${winCell}${thCells}
+                <td style="padding:4px 8px;text-align:center;">${expStr}<span style="color:#64748b;">(${actTotal})</span></td>
+            </tr>`;
+        } else {
+            const thCells = thresholds.map(r => {
+                const p = rpProbs[r.rpField];
+                const pct = p != null ? Math.round(p * 100) : null;
+                return `<td style="padding:4px 8px;text-align:center;${pct != null ? `color:${pColor(pct)};` : 'color:#475569;'}">${pct != null ? pct + '%' : '—'}</td>`;
+            }).join('');
+            return `<tr style="border-bottom:1px solid #1e293b;">
+                <td style="padding:4px 8px;text-align:center;color:#94a3b8;">Q${m.matchNumber}</td>
+                <td style="padding:4px 8px;text-align:center;font-size:0.8em;font-weight:700;color:${lColor};">${label}</td>
+                <td style="padding:4px 8px;color:#94a3b8;font-size:0.82em;">${allies}</td>
+                <td style="padding:4px 8px;text-align:center;${winPct != null ? `color:${pColor(winPct)};` : 'color:#475569;'}">${winPct != null ? winPct + '%' : '—'}${preLine}</td>
+                ${thCells}
+                <td style="padding:4px 8px;text-align:center;color:#94a3b8;">${expTotal != null ? expTotal.toFixed(1) : '—'}</td>
+            </tr>`;
+        }
+    }).join('');
+
+    const playedCount = teamMatches.filter(m => playedKeys.has(m.key)).length;
+    const footerColSpan = 3 + thresholds.length;
+    const tfoot = playedCount > 0 ? `
+        <tfoot><tr style="border-top:2px solid #334155;color:#f8fafc;font-weight:600;">
+            <td colspan="${footerColSpan}" style="padding:6px 8px;text-align:right;color:#64748b;font-size:0.82em;">TOTAL</td>
+            <td style="padding:6px 8px;text-align:center;">${totalWins}W</td>
+            <td style="padding:6px 8px;text-align:center;">${totalExpRP.toFixed(1)} <span style="color:#64748b;">(${totalActRP})</span></td>
+        </tr></tfoot>` : '';
+
+    tableContainer.innerHTML = `
+        <div style="overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:0.85em;">
+                <thead><tr style="color:#64748b;font-size:0.78em;text-transform:uppercase;letter-spacing:0.04em;border-bottom:1px solid #334155;">
+                    <th style="padding:4px 8px;text-align:center;">Match</th>
+                    <th style="padding:4px 8px;text-align:center;">Side</th>
+                    <th style="padding:4px 8px;">Allies</th>
+                    <th style="padding:4px 8px;text-align:center;">Win%</th>
+                    ${thHeaders}
+                    <th style="padding:4px 8px;text-align:center;">Exp. RP</th>
+                </tr></thead>
+                <tbody>${rows}</tbody>
+                ${tfoot}
+            </table>
+        </div>`;
+    wlMatchesRenderedFor = teamNumber;
+}
 
 async function renderMatchesTab(teamNumber, containerId = 'tab-matches') {
     const container = document.getElementById(containerId);
@@ -5893,7 +7678,7 @@ async function renderMatchesTab(teamNumber, containerId = 'tab-matches') {
     const teamOPR    = oprMap[teamStr] ?? 0;
     const evEPAMap   = Object.fromEntries(allStatTeams.map(t => [
         String(t.teamNumber),
-        t.eventEPA?.end ?? t.eventEPA?.mean ?? (typeof t.currentEPA === 'number' ? t.currentEPA : null),
+        t.epa?.end ?? t.epa?.mean ?? (typeof t.currentEPA === 'number' ? t.currentEPA : null),
     ]));
     const teamEvEPA  = evEPAMap[teamStr] ?? null;
 

@@ -822,4 +822,26 @@ export default {
             { label: 'Traversal RP',    field: 'traversalAchieved' },
         ],
     },
+
+    // ── Watch List: RP threshold prediction ──────────────────────────────────
+    // scoreComponent keys are returned by componentScores(breakdown).
+    // threshold: null → binary RP, use historical achievement rate only.
+    // threshold defaults are editable per-event in the Watch List UI.
+    rpThresholds: [
+        { label: 'Energized RP',    rpField: 'energizedAchieved',    scoreComponent: 'allianceFuel', threshold: 100,  fuelEPAKey: 'total_fuel' },
+        { label: 'Supercharged RP', rpField: 'superchargedAchieved', scoreComponent: 'allianceFuel', threshold: 360,  fuelEPAKey: 'total_fuel' },
+    ],
+
+    // Extracts scoring components from a TBA alliance breakdown object.
+    // hubScore.totalCount is not a real TBA field — sum the period counts directly.
+    componentScores: (bd) => {
+        const hs = bd?.hubScore;
+        if (!hs || hs.autoCount == null) return { allianceFuel: null };
+        return {
+            allianceFuel: (hs.autoCount ?? 0) + (hs.transitionCount ?? 0) +
+                          (hs.shift1Count ?? 0) + (hs.shift2Count ?? 0) +
+                          (hs.shift3Count ?? 0) + (hs.shift4Count ?? 0) +
+                          (hs.endgameCount ?? 0),
+        };
+    },
 };

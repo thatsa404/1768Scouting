@@ -12,11 +12,48 @@ D - If on overview and click another team number, stay on overview!! Way more va
 D - Clear match/pit scouting data separately? Single clear data button.
 D - Export/import notes &/or configuration... probably separately? Ask if any better sharing options.
 
-
 - Match predictions / strategy??
-- Alliance predictions - points range in elim matches
 - Compare teams page?
-- Schedule predictions, high-entropy remaining matches
+D - Schedule predictions, high-entropy remaining matches
+	D - Calibrate predictive model, multiple events
+	D - Add 5 categories of matches to cards in watch list, based on predictive power?
+
+
+
+
+- Predicted win rates for individual matches look different, specifically pre-event vs. simulated at match "0". Tell me what differences there are in the processing chain for those instances, because intuitively they should produce effectively the same results.
+- Keep headers/subheaders in place when scrolling on any page to help users navigate quickly.
+- It looks like several pieces are contingent on loading statbotics history ("Sync statbotics" button). Virtually everything we want to do should be doable with the statbotics live sync ("Sync Statbotics Live" button). One example is the dashboard chart showing, but the dashboard table saying "No team data — sync Statbotics first." Check what's causing that and remove those dependencies.
+- I'd like to add a dev tool (new "Dev" tab under "Tools"), that lets me explore field names for all data loaded in (JSON fields, google sheet columns), after loading an event archive or syncing API/scouting data. Provide all field/column names as well as an example data point for each. 
+- Add a new tab for Tools --> Alliances, showing expected point spreads for each alliance from a draft or a match. I'd like to combine statbotics (with existing epa sd data), OPR (with observed residuals), and scouting data (with observed residuals) to put together a fused scoring estimate for each alliance. After the user builds a draft (or loads the real one), I want to be able to send those results to this tool for quick assessment of the scoring potential of each alliance.
+
+
+
+
+- The headers should include the background, so the appearance is the top of the screen being fixed in place. Currently the bars start floating and stack against each other at the top.
+- In the dev tab, I'd like any fields with a json as a stored value to be able to be expanded into that additional json, so the fields/values stored in deeper levels are also readable
+- I'd like the alliances to no longer show RP - this is for elimination matches when ranking points have no further use. Color code the scores similar to how they are in the draft tab. If any alliance has 1768 on them, add a column that shows expected win percentage against the relevant seed. So if 1768 is on 4 seed, the 1 seed row shows 1768 alliance's win percentage against the 1 seed.
+- An issue arose where now the RP expectations are much lower in the watch list. It looks like additional ranking points (energized, supercharged) are no longer being considered viable and the % likelihoods are all 0. Please debug why this might be going on.
+- Please add a dev tool (collapse the field explorer into a section, and add this request as a second section) which allows me to move back to a snapshot in time when a given match had just completed. I'd like to be able to confirm that elements which update during the event (match estimated times, OPRs, Statbotics, scouting, etc.) all work as intended. At minimum, any completed matches in statbotics, tba, or scouting data that "have not happened" should be scrubbed from all stored data. Obviously the schedule will remain. I recognize that using this will result in me having to re-sync afterwards, but this is for development/checking purposes.
+
+
+33 - The headers are not staying as desired. I'd like all headers to remain static on the screen, along with the background behind them. The content below should scroll vertically as if it's in a separate frame. As an example, if I am in Data --> TBA --> Teams, everything above "teams", including the headers, the logo, the title "Nashoba Robotics" and the event key, should all remain static. If I am in a team detail page, I want the entire menu up top to remain static in the same way.
+34 - Please adjust the formatting so the text does not get so small in the nested fields.
+35 - The last column header should be "Win% vs Them"
+36 - the RPs look right on the watch list, but when I click a team in the predictions table to see their match section, I see: Watch List predictions not yet computed — open the Watch List tab first.
+37 - I'm seeing some issues. It looks like the match influence tab doesn't show up after rolling back to an earlier match. Some matches should still be available (even if only for some teams), so I'd still expect the match influence to display. Some other elements are not loading/adjusting correctly. Make sure that all local storage information is cleared, trim the match information as provided by the user, then reset the code as needed so the app believes the files were just synced from the event setup page. I also want to change the unix time on all the matches occuring after the rollback to such time in the future so as to make the schedule show the estimated time remaining as it would in a real competition.
+
+
+33 - good except for team headers
+34 - levels deeper?
+35 - actually just win % vs
+36 - seems ok? but not sure about page loading after time machine?
+37 - look through in more detail. Not seeing timers
+Others ???
+
+OPR playing into match predictions? How?
+
+
 
 
 
