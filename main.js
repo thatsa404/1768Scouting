@@ -3578,7 +3578,23 @@ window.viewTeamDetail = async function (teamNumber, tab = lastDetailTab) {
 
     window.switchView('teamDetailView');
     pushNavState('teamDetail');
+    fitDetailLabel();
 };
+
+function fitDetailLabel() {
+    const el = document.getElementById('detailTeamLabel');
+    if (!el) return;
+    el.style.fontSize = '';
+    const cs = getComputedStyle(el);
+    const lineH = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.3;
+    const maxH = lineH * 2 + 4; // 2 lines + small rounding buffer
+    let size = parseFloat(cs.fontSize);
+    const minSize = 13;
+    while (el.scrollHeight > maxH && size > minSize) {
+        size -= 1;
+        el.style.fontSize = size + 'px';
+    }
+}
 
 window.closeDetail = function () {
     document.getElementById('teamDetailView').style.display = 'none';
@@ -4028,6 +4044,55 @@ window.resetPreEventSnapshot = function(eventKey) {
     renderWatchList();
 };
 
+// ── WATCH LIST CONTROLS (also rendered in Dev tab) ───────────────────────────
+
+function buildWLControlsHTML(eventKey, effectiveThresholds, totalMatchCount, tbaMap) {
+    const cutoffN = watchListCutoff;
+
+    const thresholdCtrls = effectiveThresholds.filter(r => r.threshold != null).map(rpt => `
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            <span style="color:#94a3b8;font-size:0.85em;white-space:nowrap;">${rpt.label} threshold</span>
+            <input type="number" min="0" step="1" value="${rpt.threshold}"
+                style="width:64px;padding:3px 6px;background:#0f172a;border:1px solid #334155;color:#f8fafc;border-radius:4px;font-size:0.9em;"
+                onchange="saveWatchRPThreshold('${rpt.rpField}',this.value,'${eventKey}')">
+            <span style="color:#64748b;font-size:0.85em;">fuel</span>
+        </div>`).join('');
+
+    const resetBtn = effectiveThresholds.some(r => r.threshold != null)
+        ? `<button onclick="resetWatchRPThresholds('${eventKey}')" style="background:transparent;color:#64748b;border:1px solid #334155;border-radius:4px;padding:3px 10px;font-size:0.82em;cursor:pointer;">Reset thresholds</button>`
+        : '';
+
+    const cutoffCtrl = `
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            <span style="color:#94a3b8;font-size:0.85em;white-space:nowrap;">Simulate from after Q</span>
+            <input type="number" min="1" max="${totalMatchCount}" value="${cutoffN ?? ''}" placeholder="all"
+                style="width:56px;padding:3px 6px;background:#0f172a;border:1px solid #334155;color:#f8fafc;border-radius:4px;font-size:0.9em;"
+                onchange="setWatchListCutoff(this.value||null)">
+            <span style="color:#64748b;font-size:0.85em;">/ ${totalMatchCount}</span>
+            ${cutoffN != null ? `<button onclick="setWatchListCutoff(null)" style="background:transparent;color:#64748b;border:1px solid #334155;border-radius:4px;padding:3px 8px;font-size:0.82em;cursor:pointer;">Live</button>` : ''}
+        </div>`;
+
+    const snapDate = wlPreEventCache
+        ? new Date(wlPreEventCache.computed).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+        : '—';
+    const hasOPR = Object.values(tbaMap).some(t => t.opr != null);
+    const baselineTip = 'Pre-event baseline: frozen snapshot using EPA only (no OPR, no residuals). Differences from live sim are expected if data was re-synced or OPR has since become available. Click Reset to recompute.';
+    const oprNote = hasOPR ? ' <span style="color:#475569;font-size:0.82em;" title="OPR is now available — baseline was computed without it">+OPR available</span>' : '';
+    const baselineCtrl = `
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;" title="${baselineTip}">
+            <span style="color:#94a3b8;font-size:0.85em;white-space:nowrap;">Baseline snapshot: ${snapDate}${oprNote}</span>
+            <button onclick="resetPreEventSnapshot('${eventKey}')"
+                style="background:transparent;color:#64748b;border:1px solid #334155;border-radius:4px;padding:3px 8px;font-size:0.82em;cursor:pointer;">Recompute</button>
+        </div>`;
+
+    return `<div style="display:flex;flex-direction:column;gap:10px;padding:10px 0;">
+        ${thresholdCtrls}
+        ${resetBtn}
+        ${cutoffCtrl}
+        ${baselineCtrl}
+    </div>`;
+}
+
 // ── WATCH LIST RENDERER ──────────────────────────────────────────────────────
 
 async function renderWatchList() {
@@ -4118,37 +4183,9 @@ async function renderWatchList() {
     const yourMatches  = unplayed.filter(m =>  m.red?.includes(focusedTN) || m.blue?.includes(focusedTN));
     const otherMatches = unplayed.filter(m => !m.red?.includes(focusedTN) && !m.blue?.includes(focusedTN));
 
-    // ── Controls ─────────────────────────────────────────────────────────────
-
-    const thresholdCtrls = effectiveThresholds.filter(r => r.threshold != null).map(rpt => `
-        <span style="color:#94a3b8;font-size:0.82em;white-space:nowrap;">${rpt.label} ≥
-            <input type="number" min="0" step="1" value="${rpt.threshold}"
-                style="width:56px;padding:2px 5px;background:#0f172a;border:1px solid #334155;color:#f8fafc;border-radius:4px;font-size:0.9em;"
-                onchange="saveWatchRPThreshold('${rpt.rpField}',this.value,'${eventKey}')">
-            <span style="color:#64748b;font-size:0.85em;">fuel</span>
-        </span>`).join('');
-
-    const resetBtn = effectiveThresholds.some(r => r.threshold != null)
-        ? `<button onclick="resetWatchRPThresholds('${eventKey}')" style="background:transparent;color:#64748b;border:1px solid #334155;border-radius:4px;padding:2px 8px;font-size:0.78em;cursor:pointer;">Reset</button>`
-        : '';
-
-    const cutoffCtrl = `<span style="color:#94a3b8;font-size:0.82em;white-space:nowrap;">From Q
-        <input type="number" min="1" max="${totalMatchCount}" value="${cutoffN ?? ''}" placeholder="all"
-            style="width:48px;padding:2px 5px;background:#0f172a;border:1px solid #334155;color:#f8fafc;border-radius:4px;font-size:0.9em;"
-            onchange="setWatchListCutoff(this.value||null)">/${totalMatchCount}
-        ${cutoffN != null ? `<button onclick="setWatchListCutoff(null)" style="background:transparent;color:#64748b;border:1px solid #334155;border-radius:4px;padding:2px 6px;font-size:0.78em;cursor:pointer;margin-left:3px;">Live</button>` : ''}
-    </span>`;
-
-    const snapDate = wlPreEventCache
-        ? new Date(wlPreEventCache.computed).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-        : '—';
-    const hasOPR = Object.values(tbaMap).some(t => t.opr != null);
-    const baselineTip = 'Pre-event baseline: frozen snapshot using EPA only (no OPR, no residuals). Differences from live sim are expected if data was re-synced or OPR has since become available. Click Reset to recompute.';
-    const oprNote = hasOPR ? ' <span style="color:#475569;font-size:0.78em;" title="OPR is now available — baseline was computed without it">+OPR</span>' : '';
-    const baselineCtrl = `<span style="color:#94a3b8;font-size:0.82em;white-space:nowrap;" title="${baselineTip}">Baseline: ${snapDate}${oprNote}
-        <button onclick="resetPreEventSnapshot('${eventKey}')"
-            style="background:transparent;color:#64748b;border:1px solid #334155;border-radius:4px;padding:2px 6px;font-size:0.78em;cursor:pointer;margin-left:4px;">Reset</button>
-    </span>`;
+    // ── Controls (rendered into Dev tab, not Watch List banner) ──────────────
+    const devCtrlEl = document.getElementById('dev-wl-controls-content');
+    if (devCtrlEl) devCtrlEl.innerHTML = buildWLControlsHTML(eventKey, effectiveThresholds, totalMatchCount, tbaMap);
 
     const debugBanner = cutoffN != null
         ? `<div style="background:rgba(251,191,36,0.08);border:1px solid #b45309;border-radius:6px;padding:8px 14px;margin-bottom:12px;color:#fbbf24;font-size:0.85em;">
@@ -4288,10 +4325,6 @@ async function renderWatchList() {
             <span style="color:#f8fafc;font-weight:600;">Watching: ${focusedTN}</span>
             <span style="color:#334155;">|</span>
             <span style="color:#94a3b8;font-size:0.88em;">${focRP} RP · Proj rank ${focDist.p10}–${focDist.p90} (avg ${focDist.mean})</span>
-            ${thresholdCtrls}
-            ${resetBtn}
-            ${cutoffCtrl}
-            ${baselineCtrl}
         </div>
 
         <div id="wl-progress-wrap" style="margin-bottom:14px;">
@@ -4889,7 +4922,7 @@ window.switchView = function (viewId, btn) {
     if (document.body.classList.contains('split-ui') && viewId === 'teamDetailView') {
         pushCurrentRightPanel();
         window.previousView = window.currentView;
-        document.getElementById('teamDetailView').style.display = 'block';
+        document.getElementById('teamDetailView').style.display = 'flex';
         updateDetailBackButton();
         return;
     }
@@ -4917,7 +4950,7 @@ window.switchView = function (viewId, btn) {
     // 3. Show the new view
     const next = document.getElementById(viewId);
     if (next) {
-        next.style.display = 'block';
+        next.style.display = viewId === 'teamDetailView' ? 'flex' : 'block';
         window.currentView = viewId;
     }
 
@@ -5735,7 +5768,7 @@ window.sortPickListBy = function (col) {
 
 window.switchToolsTab = function (tab) {
     currentToolsTab = tab;
-    const allTabs = ['picklist', 'draft', 'field', 'alliances', 'dev'];
+    const allTabs = ['field', 'picklist', 'draft', 'alliances', 'dev'];
     allTabs.forEach(t => {
         document.getElementById(`tools-tab-${t}`).style.display = t === tab ? 'block' : 'none';
     });
@@ -6575,10 +6608,10 @@ async function renderDevTab() {
         if (!entries.length) return '<span style="color:#475569;">{}</span>';
         const preview = JSON.stringify(v);
         const short = preview.length <= 60 ? `<span style="color:#475569;font-size:0.9em;">${preview}</span>` : `<span style="color:#475569;font-size:0.9em;">${preview.slice(0, 60)}…</span>`;
-        if (depth >= 2) return short;
+        const indent = 4 + depth * 4;
         const inner = entries.map(([k2, v2]) => `
             <tr style="border-bottom:1px solid #0a0f1a;">
-                <td style="padding:2px 8px 2px 16px;color:#64748b;white-space:nowrap;font-size:13px;">${k2}</td>
+                <td style="padding:2px 8px 2px ${indent}px;color:#64748b;white-space:nowrap;font-size:13px;">${k2}</td>
                 <td style="padding:2px 8px;font-size:13px;font-family:monospace;word-break:break-all;max-width:340px;">${renderValue(v2, depth + 1)}</td>
             </tr>`).join('');
         return `<details style="display:inline-block;max-width:100%;">
@@ -6596,7 +6629,9 @@ async function renderDevTab() {
             <summary style="cursor:pointer;color:#e2e8f0;font-weight:600;padding:8px 12px;background:#0f172a;font-size:0.9em;">
                 ${name}
             </summary>
-            <table style="border-collapse:collapse;width:100%;background:#080d16;">${rows}</table>
+            <div style="overflow-x:auto;">
+                <table style="border-collapse:collapse;min-width:320px;background:#080d16;">${rows}</table>
+            </div>
         </details>`;
     };
 
@@ -6637,7 +6672,23 @@ async function renderDevTab() {
             </div>
         </details>`;
 
-    el.innerHTML = `<div style="padding:12px;">${fieldExplorerHtml}${timeMachineHtml}</div>`;
+    const wlControlsHtml = `
+        <details style="margin-bottom:16px;border:1px solid #1e293b;border-radius:8px;overflow:hidden;" open>
+            <summary style="cursor:pointer;color:#e2e8f0;font-weight:700;padding:10px 14px;background:#0f172a;font-size:1em;letter-spacing:0.02em;">
+                Watch List Settings
+            </summary>
+            <div style="padding:10px 14px;" id="dev-wl-controls-content">
+                ${wlDetailCache
+                    ? buildWLControlsHTML(
+                        (document.getElementById('eventKeyInput')?.value ?? '').trim().toLowerCase(),
+                        wlDetailCache.effectiveThresholds,
+                        wlDetailCache.allMatches.length,
+                        wlDetailCache.tbaMap)
+                    : '<div style="color:#64748b;font-size:0.85em;">Open the Watch List tab first to load settings.</div>'}
+            </div>
+        </details>`;
+
+    el.innerHTML = `<div style="padding:12px;">${wlControlsHtml}${fieldExplorerHtml}${timeMachineHtml}</div>`;
 }
 
 window.applyTimeMachineSnapshot = async function () {
@@ -6680,8 +6731,8 @@ window.applyTimeMachineSnapshot = async function () {
             const tPrev = prev.predictedTime ?? prev.time;
             if (tLast && tPrev && tLast > tPrev) gap = Math.max(300, Math.min(900, tLast - tPrev));
         }
-        const lastPlayed = playedSorted[playedSorted.length - 1];
-        let t = (lastPlayed?.predictedTime ?? lastPlayed?.time ?? Math.floor(Date.now() / 1000)) + gap;
+        // Always anchor to real now so countdowns show positive values regardless of when the event was
+        let t = Math.floor(Date.now() / 1000) + gap;
         for (const m of postCutoff) {
             await db.matches.update(m.key, { predictedTime: t });
             t += gap;
@@ -6743,6 +6794,9 @@ window.applyTimeMachineSnapshot = async function () {
     if (statusEl) statusEl.innerHTML =
         `<span style="color:#4ade80;">✓ Done — ${parts}. ` +
         `Re-sync OPR, TBA Matches, and Statbotics to restore live data.</span>`;
+
+    // Re-render the schedule so data-predicted-time attributes reflect the new timestamps
+    await window.displaySchedule();
 };
 
 async function renderAlliancesTab() {
@@ -6776,7 +6830,7 @@ async function renderAlliancesTab() {
         try {
             alliances = JSON.parse(tbaRaw).map((a, i) => ({
                 num: i + 1,
-                teams: (a.picks ?? []).map(p => parseInt(p.replace('frc', ''))).filter(Boolean),
+                teams: (a.picks ?? []).slice(0, 3).map(p => parseInt(p.replace('frc', ''))).filter(Boolean),
             }));
             source = 'TBA Alliances';
         } catch {}
