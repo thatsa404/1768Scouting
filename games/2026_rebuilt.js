@@ -831,7 +831,7 @@ export default {
     // threshold: null → binary RP, use historical achievement rate only.
     // threshold defaults are editable per-event in the Watch List UI.
     rpThresholds: [
-        { label: 'Energized RP',    rpField: 'energizedAchieved',    scoreComponent: 'allianceFuel', threshold: 100,  fuelEPAKey: 'total_fuel' },
+        { label: 'Energized RP',    rpField: 'energizedAchieved',    scoreComponent: 'allianceFuel', threshold: 190,  fuelEPAKey: 'total_fuel' },
         { label: 'Supercharged RP', rpField: 'superchargedAchieved', scoreComponent: 'allianceFuel', threshold: 360,  fuelEPAKey: 'total_fuel' },
     ],
 
