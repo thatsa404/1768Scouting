@@ -789,6 +789,144 @@
             color: #f8fafc;
         }
 
+        /* ─── Color Mode Icons ─── */
+        .cm-dark-icon { display: block; }
+        .cm-light-icon { display: none; }
+        body.light-mode .cm-dark-icon { display: none; }
+        body.light-mode .cm-light-icon { display: block; }
+
+        /* ─── Light Mode ─── */
+        body.light-mode {
+            background: #f8fafc;
+            color: #0f172a;
+        }
+        body.light-mode input {
+            background: #ffffff;
+            color: #0f172a;
+            border-color: #cbd5e1;
+        }
+        body.light-mode select {
+            background: #ffffff;
+            color: #0f172a;
+            border-color: #cbd5e1;
+        }
+        body.light-mode .top-nav {
+            background: #f8fafc;
+            border-bottom-color: #e2e8f0;
+        }
+        body.light-mode .nav-btn {
+            background: #e2e8f0;
+            color: #334155;
+        }
+        body.light-mode .nav-btn:hover {
+            background: #cbd5e1;
+            color: #0f172a;
+        }
+        body.light-mode .nav-btn.active {
+            background: #2563eb;
+            color: #ffffff;
+        }
+        body.light-mode .detail-tabs {
+            background: #f8fafc;
+            border-bottom-color: #cbd5e1;
+        }
+        body.light-mode .detail-tab-btn {
+            color: #64748b;
+        }
+        body.light-mode .detail-tab-btn:hover {
+            color: #0f172a;
+        }
+        body.light-mode .detail-tab-btn.active {
+            color: #0f172a;
+            background: rgba(37, 99, 235, 0.08);
+        }
+        body.light-mode .ui-mode-btn {
+            background: #ffffff;
+            border-color: #cbd5e1;
+            color: #94a3b8;
+        }
+        body.light-mode .ui-mode-btn:hover:not(.active) {
+            background: #e2e8f0;
+            color: #0f172a;
+        }
+        body.light-mode .prep-team-card {
+            background: #ffffff;
+            border-color: #cbd5e1;
+        }
+        body.light-mode .prep-card-header {
+            border-bottom-color: #cbd5e1;
+        }
+        body.light-mode .chart-container-prep,
+        body.light-mode .chart-container-main {
+            background: #f1f5f9;
+            border-color: #cbd5e1;
+        }
+        body.light-mode .modal-content {
+            background: #ffffff;
+            border-color: #cbd5e1;
+        }
+        body.light-mode tr:hover {
+            background: #f1f5f9;
+        }
+        body.light-mode .shortcut-btn {
+            background: #e2e8f0;
+            color: #334155;
+            border-color: #cbd5e1;
+        }
+        body.light-mode .shortcut-btn:hover {
+            background: #cbd5e1;
+        }
+        body.light-mode .shortcut-btn.active {
+            background: #1d4ed8;
+            border-color: #3b82f6;
+            color: #f8fafc;
+        }
+        body.light-mode .mobile-bottom-nav {
+            background: #ffffff;
+            border-top-color: #e2e8f0;
+        }
+        body.light-mode .mobile-nav-item {
+            color: #64748b;
+        }
+        body.light-mode .mobile-nav-item.active {
+            color: #2563eb;
+        }
+        body.light-mode .draft-pick-item:hover {
+            background: #f1f5f9;
+        }
+        body.light-mode th {
+            color: #64748b;
+        }
+        body.light-mode .stat-label {
+            color: #475569;
+        }
+        body.light-mode .stat-value {
+            color: #0f172a;
+        }
+        body.light-mode .breakdown-table th,
+        body.light-mode .breakdown-table td {
+            border-bottom-color: #e2e8f0;
+        }
+        body.light-mode .site-header h1 {
+            color: #0f172a;
+        }
+        body.light-mode .site-header .subtitle {
+            color: #475569;
+        }
+        body.light-mode .profile-link-btn {
+            background: #e2e8f0;
+            color: #334155;
+        }
+        body.light-mode .profile-link-btn:hover {
+            background: #cbd5e1;
+        }
+        /* Team numbers use <strong> in table cells with a global color:#f8fafc rule;
+           inline styles on some tables also hardcode that color. !important overrides both. */
+        body.light-mode td strong,
+        body.light-mode .match-number {
+            color: #0f172a !important;
+        }
+
         /* ─── Mobile Bottom Nav ─── */
         .mobile-bottom-nav {
             display: none;
@@ -1103,6 +1241,11 @@
             <button id="splitModeBtn" class="ui-mode-btn" onclick="setUIMode('split')" title="Split view">
                 <svg viewBox="0 0 20 20" fill="currentColor"><path d="M9 2H4.25A2.25 2.25 0 0 0 2 4.25v11.5A2.25 2.25 0 0 0 4.25 18H9V2zM11 2v16h4.75A2.25 2.25 0 0 0 18 15.75V4.25A2.25 2.25 0 0 0 15.75 2H11z"/></svg>
             </button>
+            <div style="width:1px;height:20px;background:#334155;margin:0 2px;flex-shrink:0;align-self:center;"></div>
+            <button id="colorModeBtn" class="ui-mode-btn" onclick="toggleColorMode()" title="Toggle light/dark mode">
+                <span class="cm-dark-icon"><svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7.455 2.004a.75.75 0 0 1 .26.77 7 7 0 0 0 9.958 7.967.75.75 0 0 1 1.067.853A8.5 8.5 0 1 1 6.647 1.921a.75.75 0 0 1 .808.083Z" clip-rule="evenodd"/></svg></span>
+                <span class="cm-light-icon"><svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 2a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0v-1.5A.75.75 0 0 1 10 2ZM10 15a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0v-1.5A.75.75 0 0 1 10 15ZM10 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6ZM15.657 5.404a.75.75 0 1 0-1.06-1.06l-1.061 1.06a.75.75 0 0 0 1.06 1.06l1.06-1.06ZM6.464 14.596a.75.75 0 1 0-1.06-1.06l-1.06 1.06a.75.75 0 0 0 1.06 1.06l1.06-1.06ZM18 10a.75.75 0 0 1-.75.75h-1.5a.75.75 0 0 1 0-1.5h1.5A.75.75 0 0 1 18 10ZM5 10a.75.75 0 0 1-.75.75h-1.5a.75.75 0 0 1 0-1.5h1.5A.75.75 0 0 1 5 10ZM14.596 15.657a.75.75 0 0 0 1.06-1.06l-1.06-1.061a.75.75 0 1 0-1.06 1.06l1.06 1.06ZM5.404 6.464a.75.75 0 0 0 1.06-1.06L5.404 4.343a.75.75 0 0 0-1.06 1.06l1.06 1.06Z"/></svg></span>
+            </button>
         </div>
     </div>
 
@@ -1228,7 +1371,7 @@
                     histories and the match schedule.</p>
                 <div style="display:flex;gap:10px;flex-wrap:wrap;">
                     <div style="display:flex;flex-direction:column;gap:3px;">
-                        <button id="btn-syncProjections" onclick="syncProjections()"><img src="statbotics.ico" class="source-logo">Sync Statbotics</button>
+                        <button id="btn-syncProjections" onclick="syncProjections()"><img src="tba.png" class="source-logo">Sync team list/history</button>
                         <span id="ts-statboticsProjections" style="color:#475569;font-size:0.72em;min-height:1em;"></span>
                     </div>
                     <div style="display:flex;flex-direction:column;gap:3px;">
@@ -1381,28 +1524,29 @@
                 <thead>
                     <tr>
                         <th onclick="sortGlanceBy('rp')"
-                            style="cursor:pointer; text-align:left; padding:10px 8px; border-bottom:2px solid #334155; color:#94a3b8;">
+                            style="cursor:pointer; text-align:left; padding:10px 8px; border-bottom:2px solid #334155; color:#94a3b8; white-space:nowrap;">
                             # ↕</th>
-                        <th style="text-align:left; padding:10px 8px; border-bottom:2px solid #334155; color:#94a3b8;">
-                            Team</th>
-                        <th style="text-align:left; padding:10px 8px; border-bottom:2px solid #334155; color:#94a3b8;">
+                        <th onclick="sortGlanceBy('teamNumber')"
+                            style="cursor:pointer; text-align:left; padding:10px 8px; border-bottom:2px solid #334155; color:#94a3b8; white-space:nowrap;">
+                            Team ↕</th>
+                        <th style="text-align:left; padding:10px 8px; border-bottom:2px solid #334155; color:#94a3b8; white-space:nowrap;">
                             Name</th>
                         <th onclick="sortGlanceBy('composite')"
-                            style="cursor:pointer; text-align:center; padding:10px 8px; border-bottom:2px solid #334155; color:#94a3b8;">
+                            style="cursor:pointer; text-align:center; padding:10px 8px; border-bottom:2px solid #334155; color:#94a3b8; white-space:nowrap;">
                             Score ↕</th>
                         <th onclick="sortGlanceBy('rp')"
-                            style="cursor:pointer; text-align:center; padding:10px 8px; border-bottom:2px solid #334155; color:#f8fafc;">
+                            style="cursor:pointer; text-align:center; padding:10px 8px; border-bottom:2px solid #334155; color:#94a3b8; white-space:nowrap;">
                             RP ↕</th>
                         <th onclick="sortGlanceBy('epa')"
-                            style="cursor:pointer; text-align:center; padding:10px 8px; border-bottom:2px solid #334155; color:#94a3b8;"
+                            style="cursor:pointer; text-align:center; padding:10px 8px; border-bottom:2px solid #334155; color:#94a3b8; white-space:nowrap;"
                             title="EPA / Ceiling (Statbotics)">
                             <img src="./statbotics.ico" height="18" style="vertical-align:middle;opacity:0.85;"> ↕</th>
                         <th onclick="sortGlanceBy('opr')"
-                            style="cursor:pointer; text-align:center; padding:10px 8px; border-bottom:2px solid #334155; color:#94a3b8;"
+                            style="cursor:pointer; text-align:center; padding:10px 8px; border-bottom:2px solid #334155; color:#94a3b8; white-space:nowrap;"
                             title="OPR (TBA)">
                             <img src="./tba.png" height="18" style="vertical-align:middle;opacity:0.85;"> ↕</th>
                         <th onclick="sortGlanceBy('scoutEPA')"
-                            style="cursor:pointer; text-align:center; padding:10px 8px; border-bottom:2px solid #334155; color:#94a3b8;"
+                            style="cursor:pointer; text-align:center; padding:10px 8px; border-bottom:2px solid #334155; color:#94a3b8; white-space:nowrap;"
                             title="Scouting EPA (Google Sheets)">
                             <img src="./sheets.png" height="18" style="vertical-align:middle;opacity:0.85;"> ↕</th>
                     </tr>
@@ -1887,33 +2031,6 @@
                         </p>
                     </div>
 
-                </div>
-            </div>
-
-            <!-- Section 3: Model Calibration (collapsible) -->
-            <div style="margin-bottom:12px;">
-                <div onclick="toggleAlgoSection('algo-backtest')" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:#0f172a;border:1px solid #1e293b;border-radius:8px;user-select:none;">
-                    <span style="color:#f1f5f9;font-weight:700;font-size:0.95em;">Watch List — Model Calibration</span>
-                    <span id="algo-backtest-arrow" style="color:#64748b;font-size:0.85em;">▶</span>
-                </div>
-                <div id="algo-backtest" style="display:none; padding:20px 4px 4px;">
-                    <p style="color:#94a3b8; font-size:0.92em; line-height:1.65; margin:0 0 16px;">
-                        Tests the simulation model against the current event's played matches.
-                        Each match is predicted using only the data from preceding matches — exactly as the model sees it live.
-                        Results show how well the predicted probabilities are calibrated against actual outcomes.
-                    </p>
-                    <div style="display:flex;gap:8px;align-items:center;margin-bottom:16px;flex-wrap:wrap;">
-                        <label style="color:#94a3b8;font-size:0.84em;white-space:nowrap;font-weight:600;">Event keys</label>
-                        <input id="bt-event-keys" type="text" placeholder="e.g. 2026necmp1, 2026mane, 2026nhgrs"
-                            style="flex:1;min-width:200px;background:#0f172a;border:1px solid #334155;border-radius:5px;color:#f1f5f9;padding:6px 10px;font-size:0.83em;" />
-                        <button onclick="runBacktest()" style="background:#1e3a5f;color:#93c5fd;border:1px solid #2563eb;border-radius:6px;padding:7px 18px;font-size:0.85em;font-weight:600;cursor:pointer;white-space:nowrap;">
-                            Run Backtest
-                        </button>
-                    </div>
-                    <p style="color:#475569;font-size:0.79em;margin:-8px 0 14px;line-height:1.5;">
-                        Comma-separated. The current event is pre-filled. Other events are fetched from TBA + Statbotics and cached for the session.
-                    </p>
-                    <div id="algo-backtest-results"></div>
                 </div>
             </div>
 

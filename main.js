@@ -1223,11 +1223,7 @@ function setSyncTimestamp(key) {
 window.syncProjections = async function () {
     const input = document.getElementById('eventKeyInput');
     const eventKey = input ? input.value.trim().toLowerCase() : "";
-
-    if (!eventKey) {
-        alert("Please enter a valid Event Key first!");
-        return;
-    }
+    if (!eventKey) { alert("Please enter a valid Event Key first!"); return; }
 
     localStorage.setItem('lastEventKey', eventKey);
 
@@ -1235,58 +1231,95 @@ window.syncProjections = async function () {
     const progressContainer = document.getElementById('progressContainer');
     const progressBar = document.getElementById('progressBar');
 
-    statusDiv.innerText = `Fetching team list for ${eventKey}...`;
-
-    // 1. Get the list of teams at the event
-    const eventResp = await fetch(`https://api.statbotics.io/v3/events/${eventKey}`);
-    const eventData = await eventResp.json();
-
-    // Statbotics v3 might return the teams array differently, adjust if needed
-    // Usually it requires fetching /teams?event={eventKey} but assuming you have this part working:
-    const teamsResp = await fetch(`https://api.statbotics.io/v3/team_events?event=${eventKey}`);
-    const teamsData = await teamsResp.json();
-    const teamsList = teamsData.data || teamsData.results || teamsData;
-
-    if (!teamsList || teamsList.length === 0) {
-        statusDiv.innerText = "❌ No teams found for this event.";
+    // 1. Get team list from TBA (primary source — always available)
+    statusDiv.innerText = `Fetching team list for ${eventKey} from TBA…`;
+    let tbaTeams = [];
+    try {
+        const resp = await fetchTBA(`/event/${eventKey}/teams`);
+        tbaTeams = Array.isArray(resp) ? resp : [];
+    } catch (e) {
+        statusDiv.innerText = `❌ Failed to reach TBA. Check your event key and network connection.`;
+        return;
+    }
+    if (!tbaTeams.length) {
+        statusDiv.innerText = `❌ No teams found for ${eventKey} on TBA. Check the event key.`;
         return;
     }
 
-    const totalTeams = teamsList.length;
+    // Build a name map from TBA data
+    const tbaNameMap = {};
+    for (const t of tbaTeams) tbaNameMap[t.team_number] = t.nickname || `Team ${t.team_number}`;
 
-    // 2. Show the progress bar
+    // 2. Try Statbotics event bulk endpoint to get event-specific EPA breakdowns (optional)
+    //    This only returns data if the event is hosted on Statbotics; if not, we still
+    //    fetch per-team history via processTeamPerformance using year-level data.
+    statusDiv.innerText = `Fetching Statbotics event data for ${eventKey}…`;
+    const sbMap = {};
+    try {
+        const sbResp = await fetch(`https://api.statbotics.io/v3/team_events?event=${eventKey}&limit=100`);
+        if (sbResp.ok) {
+            const sbJson = await sbResp.json();
+            const sbList = sbJson.data || sbJson.results || sbJson;
+            if (Array.isArray(sbList)) {
+                for (const te of sbList) sbMap[te.team] = te;
+            }
+        }
+    } catch (e) {
+        console.warn('Statbotics event endpoint unreachable — will use year-level data per team');
+    }
+
+    // 3. Progress bar setup
     progressContainer.style.display = 'block';
     progressBar.style.width = '0%';
+    const totalTeams = tbaTeams.length;
+    let sbFailed = 0;
 
-    // 3. The Sync Loop
+    // 4. Sync loop — always try processTeamPerformance (works without event-specific data);
+    //    only fall back to a TBA stub if Statbotics is completely unreachable for that team.
     for (let i = 0; i < totalTeams; i++) {
-        const teamEventData = teamsList[i];
-        const teamNumber = teamEventData.team;
+        const tn = tbaTeams[i].team_number;
+        statusDiv.innerText = `Syncing Team ${tn} (${i + 1}/${totalTeams})…`;
 
-        statusDiv.innerText = `Syncing Team ${teamNumber} (${i + 1}/${totalTeams})...`;
+        try {
+            // Pass event-specific data if available; processTeamPerformance handles null gracefully
+            await processTeamPerformance(tn, eventKey, false, sbMap[tn] ?? null);
+        } catch (e) {
+            // Statbotics unreachable for this team — write a minimal TBA-only record
+            console.warn(`Statbotics unavailable for team ${tn}: ${e.message}`);
+            sbFailed++;
+            const existing = await db.teams.get(tn);
+            if (!existing) {
+                await db.teams.put({
+                    teamNumber:  tn,
+                    teamName:    tbaNameMap[tn],
+                    eventKey,
+                    currentEPA:  null,
+                    autoEPA:     null,
+                    teleopEPA:   null,
+                    endgameEPA:  null,
+                    epa:         null,
+                    rawStatboticsData: [],
+                    lastUpdated: Date.now(),
+                });
+            } else if (tbaNameMap[tn] && tbaNameMap[tn] !== `Team ${tn}`) {
+                await db.teams.update(tn, { teamName: tbaNameMap[tn] });
+            }
+        }
 
-        // Pass the already-fetched team_event record so processTeamPerformance
-        // doesn't need a separate per-team API call for component EPAs.
-        await processTeamPerformance(teamNumber, eventKey, false, teamEventData);
-
-        // Update the bar width
-        const percentComplete = ((i + 1) / totalTeams) * 100;
-        progressBar.style.width = `${percentComplete}%`;
-
+        progressBar.style.width = `${((i + 1) / totalTeams) * 100}%`;
         displayTeams();
     }
 
-    // 4. Wrap it up
-    statusDiv.innerText = `✅ Sync Complete! Loaded ${totalTeams} teams.`;
-
-    // Optional: Hide the bar after a second, or turn it green
-    progressBar.style.background = '#10b981'; // Turn it green
+    // 5. Wrap up
+    const sbNote = sbFailed > 0 ? ` (${sbFailed} team${sbFailed > 1 ? 's' : ''} missing Statbotics data)` : '';
+    statusDiv.innerText = `✅ Sync complete! Loaded ${totalTeams} teams${sbNote}.`;
+    setSyncTimestamp('statboticsProjections');
+    progressBar.style.background = '#10b981';
     setTimeout(() => {
         progressContainer.style.display = 'none';
-        progressBar.style.background = '#3b82f6'; // Reset color for next time
+        progressBar.style.background = '#3b82f6';
     }, 2000);
 
-    // Finally, redraw the table
     displayTeams();
 }
 
@@ -1540,8 +1573,11 @@ function _updateScoutingAutoSyncStatus() {
 // Returns a summary string.
 async function importArchiveBundle(data, eventKey) {
     localStorage.removeItem(`scoutingFusedStats_${eventKey}`);
-    if (!Array.isArray(data) && Array.isArray(data.scoutingRows)) {
-        localStorage.setItem(`scoutingData_${eventKey}`, JSON.stringify(data.scoutingRows));
+    // Detect a structured archive bundle by eventKey presence (not by scoutingRows, which may be empty)
+    if (!Array.isArray(data) && (data.eventKey || data.teams || data.scoutingRows)) {
+        if (Array.isArray(data.scoutingRows) && data.scoutingRows.length) {
+            localStorage.setItem(`scoutingData_${eventKey}`, JSON.stringify(data.scoutingRows));
+        }
         if (data.pitRows?.length) localStorage.setItem(`pitData_${eventKey}`, JSON.stringify(data.pitRows));
         if (data.teams?.length)    await db.teams.bulkPut(data.teams);
         if (data.tbaTeams?.length) await db.tbaTeams.bulkPut(data.tbaTeams);
@@ -1562,8 +1598,10 @@ async function importArchiveBundle(data, eventKey) {
         if (data.preEventSnapshot) {
             localStorage.setItem(`wlPreEventSnapshot_${data.eventKey}`, JSON.stringify(data.preEventSnapshot));
         }
-        return `Archive loaded: ${data.scoutingRows.length} rows + ${data.teams?.length || 0} teams + ${data.matches?.length || 0} matches`;
+        const scoutCount = data.scoutingRows?.length || 0;
+        return `Archive loaded: ${scoutCount} scouting rows + ${data.teams?.length || 0} teams + ${data.matches?.length || 0} matches`;
     } else {
+        // Legacy: bare array of scouting rows
         localStorage.setItem(`scoutingData_${eventKey}`, JSON.stringify(data));
         return `${data.length} rows loaded`;
     }
@@ -1681,8 +1719,9 @@ window.loadEventArchive = async function (eventKey) {
 window.syncScoutingData = async function () {
     const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
     if (!eventKey) { alert('Enter an Event Key first.'); return; }
-    const source = getScoutingSource(eventKey);
-    if (!source) { alert('No scouting sheet source configured for this event.'); return; }
+    const rawSource = getScoutingSource(eventKey);
+    if (!rawSource) { alert('No scouting sheet source configured for this event.'); return; }
+    const source = rawSource.endsWith('.json') ? rawSource : (sheetsInputToCsvUrl(rawSource) || rawSource);
 
     const statusEl = document.getElementById('scouting-sync-status');
     if (statusEl) statusEl.textContent = 'Syncing…';
@@ -1690,7 +1729,7 @@ window.syncScoutingData = async function () {
     try {
         const resp = await fetch(source);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const data = source.endsWith('.json') ? await resp.json() : parseCSV(await resp.text());
+        const data = rawSource.endsWith('.json') ? await resp.json() : parseCSV(await resp.text());
         const now = new Date().toLocaleTimeString();
         localStorage.setItem('lastSync_scoutingData', now);
         const summary = await importArchiveBundle(data, eventKey);
@@ -1773,8 +1812,9 @@ window.savePitSheetUrl = function () {
 };
 
 async function _syncPitDataForEvent(eventKey) {
-    const source = getPitSource(eventKey);
-    if (!source) return; // no pit source — skip silently
+    const raw = getPitSource(eventKey);
+    if (!raw) return; // no pit source — skip silently
+    const source = sheetsInputToCsvUrl(raw) || raw;
     const statusEl = document.getElementById('pit-sync-status');
     if (statusEl) statusEl.textContent = 'Syncing…';
     try {
@@ -1818,7 +1858,7 @@ window.saveScoutingArchive = async function () {
     const bundle = {
         eventKey,
         archived: new Date().toISOString(),
-        scoutingRows: JSON.parse(raw),
+        scoutingRows: raw ? JSON.parse(raw) : [],
         pitRows: pitRaw ? JSON.parse(pitRaw) : null,
         teams: teams.map(({ photoUrl: _, ...rest }) => rest),
         tbaTeams,
@@ -1980,9 +2020,33 @@ function renderScoutingSection() {
     const gameConfig = getGameConfig(eventKey);
     const noConfig  = !gameConfig;
 
+    const pitSource = getPitSource(eventKey);
+
     if (!source) {
+        const hasPitData  = !!localStorage.getItem(`pitData_${eventKey}`);
+        const pitLastSync = localStorage.getItem('lastSync_pitData');
+        const pitSyncStatus = pitLastSync && hasPitData ? `Last sync: ${pitLastSync}` : hasPitData ? 'Data loaded' : 'No data yet';
+        const pitSectionHtml = pitSource
+            ? `<div>
+                   <div style="color:#94a3b8;font-size:0.75em;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:6px;">Pit Scouting</div>
+                   <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                       <span style="color:#34d399;font-size:0.78em;font-weight:700;">● Configured</span>
+                   </div>
+                   <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+                       <button id="btn-syncPitData" onclick="syncPitData()">Sync Pit Data</button>
+                       <span id="pit-sync-status" style="color:#475569;font-size:0.78em;">${pitSyncStatus}</span>
+                   </div>
+               </div>`
+            : `<div>
+                   <div style="color:#94a3b8;font-size:0.75em;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:6px;">Pit Scouting</div>
+                   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                       <input type="text" id="pitUrlInput" placeholder="Sheet ID or Google Sheets URL"
+                           style="flex:1;min-width:260px;padding:8px 10px;border-radius:4px;border:1px solid #334155;background:#0f172a;color:#f8fafc;font-size:0.85em;">
+                       <button onclick="savePitSheetUrl()">Save</button>
+                   </div>
+               </div>`;
         container.innerHTML = `
-            <p style="color:#64748b;font-size:0.85em;margin:0 0 10px;">No sheet configured for <strong style="color:#f8fafc;">${eventKey}</strong>.</p>
+            <p style="color:#64748b;font-size:0.85em;margin:0 0 10px;">No match sheet configured for <strong style="color:#f8fafc;">${eventKey}</strong>.</p>
             <div style="display:flex;flex-direction:column;gap:10px;">
                 <div>
                     <div style="color:#94a3b8;font-size:0.75em;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:6px;">Match Scouting</div>
@@ -1992,14 +2056,7 @@ function renderScoutingSection() {
                         <button onclick="saveScoutingSheetUrl()">Save</button>
                     </div>
                 </div>
-                <div>
-                    <div style="color:#94a3b8;font-size:0.75em;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:6px;">Pit Scouting</div>
-                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                        <input type="text" id="pitUrlInput" placeholder="Sheet ID or Google Sheets URL"
-                            style="flex:1;min-width:260px;padding:8px 10px;border-radius:4px;border:1px solid #334155;background:#0f172a;color:#f8fafc;font-size:0.85em;">
-                        <button onclick="savePitSheetUrl()">Save</button>
-                    </div>
-                </div>
+                ${pitSectionHtml}
             </div>`;
         return;
     }
@@ -2011,7 +2068,6 @@ function renderScoutingSection() {
         ? `<span style="color:#fbbf24;font-size:0.78em;">⚠ No game config for ${eventKey.match(/^\d{4}/)?.[0] ?? '?'}</span>`
         : `<span style="color:#64748b;font-size:0.78em;">Game: <strong style="color:#94a3b8;">${gameConfig.name} ${gameConfig.year}</strong></span>`;
 
-    const pitSource    = getPitSource(eventKey);
     const hasPitData   = !!localStorage.getItem(`pitData_${eventKey}`);
     const pitLastSync  = localStorage.getItem('lastSync_pitData');
     const syncStatus    = lastSync && hasData ? `Last sync: ${lastSync}` : hasData ? 'Data loaded' : 'No data yet';
@@ -2120,7 +2176,7 @@ window.clearEvent = async function () {
         await db.tbaTeams.clear();
         await db.matches.clear();
 
-        for (const key of ['statboticsLive', 'tbaOPR', 'tbaMatches']) {
+        for (const key of ['statboticsLive', 'tbaOPR', 'tbaMatches', 'statboticsProjections']) {
             localStorage.removeItem(`lastSync_${key}`);
             const el = document.getElementById(`ts-${key}`);
             if (el) el.textContent = '';
@@ -2136,8 +2192,20 @@ window.clearEvent = async function () {
         localStorage.removeItem('mockDraftState');
         localStorage.removeItem('realDraftState');
 
-        displayTeams();
-        displaySchedule();
+        // Clear module-level caches so stale data doesn't persist across renders
+        wlDetailCache = null;
+        wlPreEventCache = null;
+
+        // Destroy chart instances so old data doesn't show on cleared canvases
+        if (teamChartInstance) { teamChartInstance.destroy(); teamChartInstance = null; }
+        if (tbaChartInstance) { tbaChartInstance.destroy(); tbaChartInstance = null; }
+        if (matchInfluenceChartInstance) { matchInfluenceChartInstance.destroy(); matchInfluenceChartInstance = null; }
+
+        await displayTeams();
+        await displayTBATeams();
+        await displaySchedule();
+        await renderAtAGlance();
+        await renderPickList();
         renderScoutingSection();
         displayScoutingTeams();
     } catch (err) {
@@ -3111,8 +3179,9 @@ async function renderAtAGlance() {
     ]);
 
     if (!allTeams.length) {
-        statusEl.textContent = 'No team data — sync Statbotics (History or Live) first.';
+        statusEl.textContent = 'No team data — sync team list/history or Statbotics Live first.';
         table.style.display = 'none';
+        if (tbody) tbody.innerHTML = '';
         return;
     }
 
@@ -3262,6 +3331,8 @@ async function renderAtAGlance() {
             case 'opr': va = a.opr ?? -999; vb = b.opr ?? -999; break;
             case 'scoutEPA': va = a.scoutEPA ?? -999; vb = b.scoutEPA ?? -999; break;
             case 'composite': va = -a.composite; vb = -b.composite; break;
+            // Swap a/b so glanceSortOrder=1 means ascending (smallest team number first)
+            case 'teamNumber': va = b.team.teamNumber; vb = a.team.teamNumber; break;
             default: va = a.rp.rp; vb = b.rp.rp; break;
         }
         return (vb - va) * glanceSortOrder || avgScore(b.rp) - avgScore(a.rp) || (b.epaVal - a.epaVal);
@@ -4915,6 +4986,21 @@ function initUIMode() {
     window.setUIMode(mode);
 }
 
+window.setColorMode = function (mode) {
+    localStorage.setItem('colorMode', mode);
+    document.body.classList.toggle('light-mode', mode === 'light');
+};
+
+window.toggleColorMode = function () {
+    const current = localStorage.getItem('colorMode') || 'dark';
+    window.setColorMode(current === 'dark' ? 'light' : 'dark');
+};
+
+function initColorMode() {
+    const saved = localStorage.getItem('colorMode') || 'dark';
+    window.setColorMode(saved);
+}
+
 window.switchView = function (viewId, btn) {
     // In split mode, showing the team detail uses pushCurrentRightPanel to save
     // whatever is open (including matchPrepView) — handle it first, before the
@@ -5305,43 +5391,48 @@ async function renderCurationTab() {
     if (!container) return;
 
     const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
-    const rawStr   = localStorage.getItem(`scoutingData_${eventKey}`);
-    if (!rawStr) {
+    const rawStr    = localStorage.getItem(`scoutingData_${eventKey}`);
+    const pitRawStr = localStorage.getItem(`pitData_${eventKey}`);
+    if (!rawStr && !pitRawStr) {
         container.innerHTML = '<p style="color:#64748b;font-style:italic;margin-top:20px;">No scouting data loaded.</p>';
         return;
     }
 
     container.innerHTML = '<p style="color:#64748b;font-style:italic;margin-top:20px;">Computing…</p>';
 
-    const processed = processScoutingData(eventKey, JSON.parse(rawStr), getScoutingColumnOverrides(eventKey));
-    if (!processed) { container.innerHTML = '<p style="color:#64748b;font-style:italic;">No game config for this event.</p>'; return; }
+    let config = null, byTeam = {}, observations = [];
+    let dedupedByTeam = {}, scoutIndex = {};
+    let reportingMode = 'unknown', isCumulative = true;
 
-    const { config, byTeam, observations } = processed;
-    const tbaMatches  = await db.matches.where('eventKey').equals(eventKey).toArray();
-    const hasBreakdowns = tbaMatches.some(m => m.redBreakdown);
-
-    // Deduplicated rows per team
-    const dedupedByTeam = {};
-    for (const [tn, rows] of Object.entries(byTeam)) {
-        dedupedByTeam[tn] = deduplicateTeamRows(rows).rows;
-    }
-
-    // Build match-level scouting index (team → deduplicated single row per match)
-    const scoutIndex = {}; // matchNumber → { teamNum: row }
-    for (const [tn, rows] of Object.entries(dedupedByTeam)) {
-        for (const r of rows) {
-            if (!scoutIndex[r.matchNumber]) scoutIndex[r.matchNumber] = {};
-            scoutIndex[r.matchNumber][tn] = r;
+    if (rawStr) {
+        const processed = processScoutingData(eventKey, JSON.parse(rawStr), getScoutingColumnOverrides(eventKey));
+        if (!processed) { container.innerHTML = '<p style="color:#64748b;font-style:italic;">No game config for this event.</p>'; return; }
+        ({ config, byTeam, observations } = processed);
+        for (const [tn, rows] of Object.entries(byTeam)) {
+            dedupedByTeam[tn] = deduplicateTeamRows(rows).rows;
+        }
+        for (const [tn, rows] of Object.entries(dedupedByTeam)) {
+            for (const r of rows) {
+                if (!scoutIndex[r.matchNumber]) scoutIndex[r.matchNumber] = {};
+                scoutIndex[r.matchNumber][tn] = r;
+            }
         }
     }
 
-    // Detect cumulative reporting mode
-    const reportingMode = hasBreakdowns
-        ? detectCumulativeReportingMode(tbaMatches, config.teleopFuseStats ?? [])
-        : 'unknown';
-    const isCumulative = reportingMode !== 'separate';
+    const tbaMatches    = await db.matches.where('eventKey').equals(eventKey).toArray();
+    const hasBreakdowns = tbaMatches.some(m => m.redBreakdown);
+
+    if (rawStr && config) {
+        reportingMode = hasBreakdowns
+            ? detectCumulativeReportingMode(tbaMatches, config.teleopFuseStats ?? [])
+            : 'unknown';
+        isCumulative = reportingMode !== 'separate';
+    }
 
     let html = '';
+    if (!rawStr) {
+        html += '<p style="color:#64748b;font-style:italic;font-size:0.85em;margin:0 0 16px;">No match scouting data loaded — showing pit scouting only.</p>';
+    }
 
     // ── 1. MATCH COVERAGE ───────────────────────────────────────────────────
     const allMatchNums = tbaMatches.map(m => m.matchNumber).sort((a, b) => a - b);
@@ -5363,7 +5454,7 @@ async function renderCurationTab() {
     const hdrStyle = (color) => `font-size:0.7em;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;border-left:3px solid ${color};padding-left:10px;color:#94a3b8;flex:1;`;
     const chevron = `<span class="curation-chevron" style="color:#475569;font-size:0.9em;margin-left:8px;transition:transform 0.15s;">▼</span>`;
 
-    html += `
+    if (rawStr) html += `
     <details style="margin-bottom:20px;">
         <summary style="${summaryStyle('#64748b')}">
             <span style="${hdrStyle('#64748b')}">Match Coverage</span>
@@ -5413,15 +5504,17 @@ async function renderCurationTab() {
 
     // ── 2. PIT SCOUTING COVERAGE ─────────────────────────────────────────────
     {
-        const pitRawStr = localStorage.getItem(`pitData_${eventKey}`);
-
-        // Build full team list: prefer TBA match alliances, fall back to scouting byTeam
+        // Build full team list: TBA match alliances → scouting byTeam → db.teams (synced team list)
         const eventTeams = new Set();
         for (const m of tbaMatches) {
             for (const t of [...(m.red || []), ...(m.blue || [])]) eventTeams.add(t);
         }
         if (!eventTeams.size) {
             for (const tn of Object.keys(byTeam)) eventTeams.add(tn);
+        }
+        if (!eventTeams.size) {
+            const dbTeams = await db.teams.where('eventKey').equals(eventKey).toArray();
+            for (const t of dbTeams) eventTeams.add(String(t.teamNumber));
         }
 
         if (!pitRawStr) {
@@ -5542,7 +5635,7 @@ async function renderCurationTab() {
     }
 
     // ── 4. OUTLIER MATCHES ──────────────────────────────────────────────────
-    {
+    if (rawStr) {
         const fusedCache = (() => { try { return JSON.parse(localStorage.getItem(`scoutingFusedStats_${eventKey}`)); } catch { return null; } })();
 
         const getMatchEPA = (tn, row) => {
@@ -5605,7 +5698,7 @@ async function renderCurationTab() {
     }
 
     // ── 5. EPA COMPARISON ───────────────────────────────────────────────────
-    {
+    if (rawStr) {
         const statboticsTeams = await db.teams.toArray();
         const statByTeam = Object.fromEntries(statboticsTeams.map(t => [String(t.teamNumber), t]));
         const fusedCache = (() => { try { return JSON.parse(localStorage.getItem(`scoutingFusedStats_${eventKey}`)); } catch { return null; } })();
@@ -5658,7 +5751,7 @@ async function renderCurationTab() {
     }
 
     // ── 6. UNKNOWN TEAM NUMBERS ──────────────────────────────────────────────
-    {
+    if (rawStr) {
         const knownTeams = new Set();
         for (const m of tbaMatches) {
             for (const t of [...(m.red || []), ...(m.blue || [])]) knownTeams.add(t);
@@ -6079,7 +6172,7 @@ async function renderPickList() {
     ]);
 
     if (!allTeams.length) {
-        if (statusEl) statusEl.textContent = 'No team data — sync Statbotics (History or Live) first.';
+        if (statusEl) statusEl.textContent = 'No team data — sync team list/history or Statbotics Live first.';
         table.style.display = 'none';
         return;
     }
@@ -6688,7 +6781,34 @@ async function renderDevTab() {
             </div>
         </details>`;
 
-    el.innerHTML = `<div style="padding:12px;">${wlControlsHtml}${fieldExplorerHtml}${timeMachineHtml}</div>`;
+    const calibrationHtml = `
+        <details style="margin-bottom:16px;border:1px solid #1e293b;border-radius:8px;overflow:hidden;">
+            <summary style="cursor:pointer;color:#e2e8f0;font-weight:700;padding:10px 14px;background:#0f172a;font-size:1em;letter-spacing:0.02em;">
+                Watch List — Model Calibration
+            </summary>
+            <div style="padding:14px;">
+                <p style="color:#94a3b8;font-size:0.85em;line-height:1.6;margin:0 0 14px;">
+                    Tests the simulation model against the current event's played matches.
+                    Each match is predicted using only data from preceding matches — exactly as the model sees it live.
+                    Results show how well the predicted probabilities are calibrated against actual outcomes.
+                </p>
+                <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">
+                    <label style="color:#94a3b8;font-size:0.84em;white-space:nowrap;font-weight:600;">Event keys</label>
+                    <input id="bt-event-keys" type="text" value="${eventKey}"
+                        placeholder="e.g. 2026necmp1, 2026mane"
+                        style="flex:1;min-width:180px;background:#0f172a;border:1px solid #334155;border-radius:5px;color:#f1f5f9;padding:6px 10px;font-size:0.83em;">
+                    <button onclick="runBacktest()" style="background:#1e3a5f;color:#93c5fd;border:1px solid #2563eb;border-radius:6px;padding:6px 16px;font-size:0.85em;font-weight:600;cursor:pointer;white-space:nowrap;">
+                        Run Backtest
+                    </button>
+                </div>
+                <p style="color:#475569;font-size:0.79em;margin:-2px 0 12px;line-height:1.5;">
+                    Comma-separated. Other events are fetched from TBA + Statbotics and cached for the session.
+                </p>
+                <div id="algo-backtest-results"></div>
+            </div>
+        </details>`;
+
+    el.innerHTML = `<div style="padding:12px;">${wlControlsHtml}${calibrationHtml}${fieldExplorerHtml}${timeMachineHtml}</div>`;
 }
 
 window.applyTimeMachineSnapshot = async function () {
@@ -6929,7 +7049,7 @@ async function renderDraft() {
     const [allTeams, allMatches, allTBATeams] = await Promise.all([db.teams.toArray(), db.matches.toArray(), db.tbaTeams.toArray()]);
 
     if (!allTeams.length) {
-        if (statusEl) statusEl.textContent = 'No team data — sync Statbotics (History or Live) first.';
+        if (statusEl) statusEl.textContent = 'No team data — sync team list/history or Statbotics Live first.';
         allianceBody.innerHTML = '';
         pickPanel.innerHTML = '<p style="color:#64748b;font-size:0.9em;padding:12px;">No data.</p>';
         return;
@@ -8709,6 +8829,7 @@ const bootApp = async () => {
 
     // 1. Set the initial view (Home)
     initUIMode();
+    initColorMode();
     window.switchView('homeView');
 
     // 2. Load the cached data into the tables immediately
