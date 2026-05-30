@@ -1290,6 +1290,7 @@
         <div class="detail-tabs" id="scheduleTabs" style="margin-top:0; margin-bottom:12px;">
             <button class="detail-tab-btn active" onclick="switchScheduleTab('matches')">Matches</button>
             <button class="detail-tab-btn" onclick="switchScheduleTab('watchlist')">Watch List</button>
+            <button class="detail-tab-btn" onclick="switchScheduleTab('streams')">Streams</button>
         </div>
 
         <div id="schedule-sub-matches">
@@ -1339,6 +1340,10 @@
 
         <div id="schedule-sub-watchlist" style="display:none;">
             <!-- rendered by renderWatchList() -->
+        </div>
+
+        <div id="schedule-sub-streams" style="display:none;padding:16px 0;">
+            <!-- rendered by renderStreamsTab() -->
         </div>
     </div>
 

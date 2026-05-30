@@ -20,6 +20,7 @@ window.db = db;
 // 2. CONFIG & API KEYS
 const TBA_BASE = 'https://www.thebluealliance.com/api/v3';
 const TBA_KEY = import.meta.env.VITE_TBA_KEY;
+const YT_KEY = import.meta.env.VITE_YOUTUBE_KEY || '';
 
 // SCOUTING_SOURCES is imported as EVENT_SOURCES from ./games/registry.js above.
 // To add events, edit the eventSources field in the appropriate games/ config file.
@@ -213,6 +214,7 @@ window.fetchSchedule = async function (eventKey) {
             redScore: m.alliances.red.score,
             blueScore: m.alliances.blue.score,
             predictedTime: m.predicted_time || null,
+            actualTime: m.actual_time || null,
             videos: (m.videos || []).filter(v => v.type === 'youtube').map(v => v.key),
         })));
 
@@ -806,7 +808,30 @@ window.viewMatchDetail = async function (matchKey) {
     const videoSection = document.getElementById('matchVideoSection');
     const ytKeys = match.videos || [];
     if (ytKeys.length === 0) {
-        videoSection.innerHTML = `<p style="color:#64748b; font-style:italic; font-size:0.85em; margin:0;">No match video available.</p>`;
+        let webcasts = [];
+        try {
+            const ek = document.getElementById('eventKeyInput')?.value.trim().toLowerCase() || match.eventKey;
+            webcasts = JSON.parse(localStorage.getItem(`webcasts_${ek}`) || '[]');
+        } catch {}
+        const stream = findStreamForMatch(match, webcasts);
+        if (stream) {
+            const offset = Math.max(0, match.actualTime - stream.startTimestamp - 20);
+            const thumbId = 'stream-seek-thumb';
+            videoSection.innerHTML = `
+                <div style="color:#64748b;font-size:0.78em;font-style:italic;margin-bottom:6px;">No match video yet — live stream seeked to approx. match time</div>
+                <div id="${thumbId}" onclick="loadYTEmbedAtTime('${stream.channel}','${thumbId}',${offset})"
+                    style="position:relative;cursor:pointer;border-radius:8px;overflow:hidden;background:#000;">
+                    <img src="https://img.youtube.com/vi/${stream.channel}/hqdefault.jpg"
+                        style="width:100%;display:block;opacity:0.75;"
+                        onerror="this.style.display='none'" loading="lazy">
+                    <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;gap:6px;">
+                        <div style="width:56px;height:40px;background:rgba(15,23,42,0.82);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.3em;">⏩</div>
+                        <div style="background:rgba(15,23,42,0.7);color:#94a3b8;font-size:0.72em;padding:2px 8px;border-radius:4px;">Live Stream</div>
+                    </div>
+                </div>`;
+        } else {
+            videoSection.innerHTML = `<p style="color:#64748b; font-style:italic; font-size:0.85em; margin:0;">No match video available.</p>`;
+        }
     } else {
         videoSection.innerHTML = ytKeys.map((key, i) => {
             const thumbId = `yt-thumb-${i}`;
@@ -1041,6 +1066,23 @@ window.loadYTEmbed = function (key, thumbId) {
             allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen loading="lazy"></iframe>
     </div>`;
 };
+
+window.loadYTEmbedAtTime = function (key, thumbId, startSecs) {
+    const container = document.getElementById(thumbId);
+    if (!container) return;
+    container.outerHTML = `<div style="position:relative; padding-bottom:56.25%; height:0; overflow:hidden; border-radius:8px;">
+        <iframe src="https://www.youtube-nocookie.com/embed/${key}?autoplay=1&start=${Math.floor(startSecs)}"
+            style="position:absolute; top:0; left:0; width:100%; height:100%; border:0;"
+            allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen loading="lazy"></iframe>
+    </div>`;
+};
+
+// Returns the webcast record (with startTimestamp) whose date matches the match's actual_time UTC date.
+function findStreamForMatch(match, webcasts) {
+    if (!match.actualTime || !webcasts.length) return null;
+    const matchDate = new Date(match.actualTime * 1000).toISOString().slice(0, 10);
+    return webcasts.find(w => w.date === matchDate && w.type === 'youtube' && w.startTimestamp) ?? null;
+}
 
 
 
@@ -1461,8 +1503,29 @@ window.syncSchedule = async function () {
             redScore: m.alliances.red.score,
             blueScore: m.alliances.blue.score,
             predictedTime: m.predicted_time || null,
+            actualTime: m.actual_time || null,
             videos: (m.videos || []).filter(v => v.type === 'youtube').map(v => v.key),
         })));
+
+        // Fetch webcasts from event metadata, then enrich with YouTube stream start times
+        try {
+            const evData = await fetchTBA(`/event/${eventKey}`);
+            const webcasts = (evData.webcasts || []).filter(w => w.type === 'youtube');
+            if (YT_KEY && webcasts.length > 0) {
+                const ids = webcasts.map(w => w.channel).join(',');
+                const ytData = await fetch(
+                    `https://www.googleapis.com/youtube/v3/videos?id=${ids}&part=liveStreamingDetails&key=${YT_KEY}`
+                ).then(r => r.json());
+                for (const item of (ytData.items || [])) {
+                    const wc = webcasts.find(w => w.channel === item.id);
+                    const startStr = item.liveStreamingDetails?.actualStartTime;
+                    if (wc && startStr) wc.startTimestamp = Math.floor(new Date(startStr).getTime() / 1000);
+                }
+            }
+            localStorage.setItem(`webcasts_${eventKey}`, JSON.stringify(webcasts));
+        } catch (e) {
+            console.warn('Could not fetch webcasts:', e);
+        }
 
         statusDiv.innerText = "✅ Schedule Sync Complete!";
         displaySchedule();
@@ -2193,6 +2256,7 @@ window.clearEvent = async function () {
         localStorage.removeItem(`rpThresholds_${eventKey}`);
         localStorage.removeItem(`wlCalibrationBeta_${eventKey}`);
         localStorage.removeItem(`wlPreEventSnapshot_${eventKey}`);
+        localStorage.removeItem(`webcasts_${eventKey}`);
 
         // Clear module-level caches so stale data doesn't persist across renders
         wlDetailCache = null;
@@ -2884,6 +2948,7 @@ window.syncTBAMatches = async function () {
             redBreakdown: m.score_breakdown?.red || null,
             blueBreakdown: m.score_breakdown?.blue || null,
             predictedTime: m.predicted_time || null,
+            actualTime: m.actual_time || null,
             videos: (m.videos || []).filter(v => v.type === 'youtube').map(v => v.key),
         }));
         await db.matches.bulkPut(records);
@@ -3699,6 +3764,7 @@ window.viewTeamDetail = async function (teamNumber, tab = lastDetailTab) {
 
     activeTeamData = team;
     activeTBAData = await db.tbaTeams.get(teamNumber) || await db.tbaTeams.get(parseInt(teamNumber));
+    if (tab === 'epa-opr') { lastDetailDataSubTab = 'epa'; tab = 'data'; }
     switchDetailTab(tab);
 
     window.switchView('teamDetailView');
@@ -3803,14 +3869,48 @@ let wlComputedAsOf = null; // label shown in banner, e.g. "Q12" or null for pre-
 let wlCalibrationBeta = 0.982;
 
 window.switchScheduleTab = function (tab) {
-    ['matches', 'watchlist'].forEach(t => {
+    ['matches', 'watchlist', 'streams'].forEach(t => {
         document.getElementById(`schedule-sub-${t}`).style.display = t === tab ? '' : 'none';
     });
     document.querySelectorAll('#scheduleTabs .detail-tab-btn').forEach((btn, i) => {
-        btn.classList.toggle('active', ['matches', 'watchlist'][i] === tab);
+        btn.classList.toggle('active', ['matches', 'watchlist', 'streams'][i] === tab);
     });
     if (tab === 'watchlist' && watchListDirty) showWatchListStale();
+    if (tab === 'streams') renderStreamsTab();
 };
+
+function renderStreamsTab() {
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    const container = document.getElementById('schedule-sub-streams');
+    if (!container) return;
+
+    let webcasts = [];
+    try { webcasts = JSON.parse(localStorage.getItem(`webcasts_${eventKey}`) || '[]'); } catch {}
+
+    if (!eventKey || webcasts.length === 0) {
+        container.innerHTML = `<p style="color:#64748b;font-style:italic;text-align:center;margin-top:32px;">No streams found. Sync Schedule to check for webcasts.</p>`;
+        return;
+    }
+
+    container.innerHTML = webcasts.map((w, i) => {
+        const thumbId = `stream-thumb-${i}`;
+        const dateLabel = w.date ? `<div style="color:#94a3b8;font-size:0.8em;margin-bottom:6px;">${w.date}</div>` : '';
+        return `<div style="margin-bottom:24px;">
+            ${dateLabel}
+            <div id="${thumbId}" onclick="loadYTEmbed('${w.channel}','${thumbId}')"
+                style="position:relative;cursor:pointer;border-radius:8px;overflow:hidden;background:#000;max-width:640px;">
+                <img src="https://img.youtube.com/vi/${w.channel}/hqdefault.jpg"
+                    style="width:100%;display:block;opacity:0.85;"
+                    onerror="this.style.display='none'" loading="lazy">
+                <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;">
+                    <div style="width:64px;height:44px;background:rgba(255,0,0,0.85);border-radius:10px;display:flex;align-items:center;justify-content:center;">
+                        <div style="border-style:solid;border-width:10px 0 10px 20px;border-color:transparent transparent transparent #fff;margin-left:4px;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+    }).join('');
+}
 
 // ── WATCH LIST ENGINE ────────────────────────────────────────────────────────
 
@@ -6996,8 +7096,94 @@ async function renderDevTab() {
         }
     }
 
-    el.innerHTML = `<div style="padding:12px;">${quipTierHtml}${wlControlsHtml}${calibrationHtml}${fieldExplorerHtml}${timeMachineHtml}</div>`;
+    // ── Stream Seek Test ────────────────────────────────────────────────────
+    let streamSeekStreams = [];
+    try {
+        streamSeekStreams = JSON.parse(localStorage.getItem(`webcasts_${eventKey}`) || '[]')
+            .filter(w => w.type === 'youtube' && w.startTimestamp)
+            .sort((a, b) => a.startTimestamp - b.startTimestamp);
+    } catch {}
+
+    const streamSeekTestHtml = `
+        <details style="margin-bottom:16px;border:1px solid #1e293b;border-radius:8px;overflow:hidden;">
+            <summary style="cursor:pointer;color:#e2e8f0;font-weight:700;padding:10px 14px;background:#0f172a;font-size:1em;letter-spacing:0.02em;">
+                Stream Seek Test
+            </summary>
+            <div style="padding:14px;">
+                <p style="color:#94a3b8;font-size:0.85em;margin:0 0 10px;line-height:1.6;">
+                    Sets Match 1's <code style="color:#93c5fd;">actualTime</code> to N minutes after the matching stream starts.
+                    The stream is selected by date — large N values will cross into the next day's stream automatically.
+                    Open Match 1 afterward to verify the embed seeks to the right spot.
+                </p>
+                ${streamSeekStreams.length
+                    ? `<div style="margin-bottom:12px;">${streamSeekStreams.map(s => {
+                        const startLocal = new Date(s.startTimestamp * 1000).toLocaleString();
+                        return `<div style="color:#64748b;font-size:0.82em;margin-bottom:2px;">📺 ${s.date} — started ${startLocal}</div>`;
+                    }).join('')}</div>`
+                    : `<div style="color:#64748b;font-size:0.82em;margin-bottom:12px;">No stream start times — sync schedule with <code style="color:#93c5fd;">VITE_YOUTUBE_KEY</code> set.</div>`
+                }
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                    <label style="color:#94a3b8;font-size:0.85em;">Minutes into stream</label>
+                    <input id="dev-stream-minutes" type="number" min="0" step="1" value="30"
+                        style="width:80px;padding:4px 8px;background:#0f172a;border:1px solid #334155;color:#f8fafc;border-radius:4px;font-size:0.9em;">
+                    <button onclick="devApplyStreamSeekTest()"
+                        style="padding:5px 14px;background:#1e3a5f;color:#93c5fd;border:1px solid #2563eb;border-radius:5px;cursor:pointer;font-size:0.85em;font-weight:600;">
+                        Apply
+                    </button>
+                    <button onclick="devResetStreamSeekTest()"
+                        style="padding:5px 14px;background:#334155;color:#f8fafc;border:1px solid #475569;border-radius:5px;cursor:pointer;font-size:0.85em;font-weight:600;">
+                        Reset
+                    </button>
+                </div>
+                <div id="dev-stream-status" style="margin-top:10px;font-size:0.82em;color:#64748b;"></div>
+            </div>
+        </details>`;
+
+    el.innerHTML = `<div style="padding:12px;">${quipTierHtml}${wlControlsHtml}${calibrationHtml}${streamSeekTestHtml}${fieldExplorerHtml}${timeMachineHtml}</div>`;
 }
+
+window.devApplyStreamSeekTest = async function () {
+    const statusEl = document.getElementById('dev-stream-status');
+    const minutes = parseFloat(document.getElementById('dev-stream-minutes')?.value ?? '');
+    if (isNaN(minutes) || minutes < 0) { statusEl.textContent = 'Enter a valid number of minutes (≥ 0).'; return; }
+
+    const eventKey = (document.getElementById('eventKeyInput')?.value ?? '').trim().toLowerCase();
+    let webcasts = [];
+    try { webcasts = JSON.parse(localStorage.getItem(`webcasts_${eventKey}`) || '[]'); } catch {}
+
+    const streams = webcasts
+        .filter(w => w.type === 'youtube' && w.startTimestamp)
+        .sort((a, b) => a.startTimestamp - b.startTimestamp);
+    if (!streams.length) { statusEl.textContent = 'No stream start times — sync schedule with VITE_YOUTUBE_KEY set.'; return; }
+
+    const offsetSecs = Math.round(minutes * 60);
+    // Pick the stream whose date still contains the offset time; fall back to last stream.
+    const chosenStream = streams.find(s =>
+        new Date((s.startTimestamp + offsetSecs) * 1000).toISOString().slice(0, 10) === s.date
+    ) ?? streams[streams.length - 1];
+
+    const testActualTime = chosenStream.startTimestamp + offsetSecs;
+
+    const allMatches = await db.matches.toArray();
+    if (!allMatches.length) { statusEl.textContent = 'No matches in DB — sync schedule first.'; return; }
+    allMatches.sort((a, b) => a.matchNumber - b.matchNumber);
+    const firstMatch = allMatches[0];
+    await db.matches.update(firstMatch.key, { actualTime: testActualTime });
+
+    const seekMins = Math.floor(offsetSecs / 60);
+    const seekSecs = String(offsetSecs % 60).padStart(2, '0');
+    statusEl.innerHTML = `Match ${firstMatch.matchNumber} → ${new Date(testActualTime * 1000).toLocaleString()} · stream: ${chosenStream.date} · offset: ${seekMins}m${seekSecs}s. <a href="#" onclick="viewMatchDetail('${firstMatch.key}');return false;" style="color:#60a5fa;text-decoration:none;">Open match →</a>`;
+};
+
+window.devResetStreamSeekTest = async function () {
+    const statusEl = document.getElementById('dev-stream-status');
+    const allMatches = await db.matches.toArray();
+    if (!allMatches.length) { if (statusEl) statusEl.textContent = 'No matches in DB.'; return; }
+    allMatches.sort((a, b) => a.matchNumber - b.matchNumber);
+    const firstMatch = allMatches[0];
+    await db.matches.update(firstMatch.key, { actualTime: null });
+    if (statusEl) statusEl.textContent = `Match ${firstMatch.matchNumber} actualTime cleared. Re-sync schedule to fully restore.`;
+};
 
 window.applyTimeMachineSnapshot = async function () {
     const statusEl = document.getElementById('devTimeMachineStatus');
