@@ -25,6 +25,55 @@ const YT_KEY = import.meta.env.VITE_YOUTUBE_KEY || '';
 // SCOUTING_SOURCES is imported as EVENT_SOURCES from ./games/registry.js above.
 // To add events, edit the eventSources field in the appropriate games/ config file.
 
+// ── NOTIFICATIONS ─────────────────────────────────────────────────────────────
+const _firedNotifIds = new Set(); // prevents re-firing within a session
+
+function fireNotif(title, body, tag) {
+    if (localStorage.getItem('notifEnabled') !== 'true') return;
+    if (Notification.permission === 'granted') {
+        new Notification(title, { body, tag, icon: '/favicon.ico' });
+    }
+    if (document.visibilityState !== 'visible') {
+        document.title = `🔔 ${title}`;
+    }
+}
+
+function updateNotifBtn() {
+    const btn = document.getElementById('notifBtn');
+    if (!btn) return;
+    const enabled = localStorage.getItem('notifEnabled') === 'true';
+    btn.style.opacity = enabled ? '1' : '0.35';
+    btn.title = Notification.permission === 'denied'
+        ? 'Notifications blocked — allow in browser settings'
+        : enabled ? 'Notifications on (click to disable)' : 'Notifications off (click to enable)';
+}
+
+function initNotifications() {
+    updateNotifBtn();
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') document.title = '1768 Scouting';
+    });
+}
+
+window.toggleNotifications = async function () {
+    if (!('Notification' in window)) { alert('Your browser does not support notifications.'); return; }
+    const enabled = localStorage.getItem('notifEnabled') === 'true';
+    if (!enabled) {
+        if (Notification.permission === 'denied') {
+            alert('Notifications are blocked. Allow them in your browser settings, then try again.');
+            return;
+        }
+        if (Notification.permission !== 'granted') {
+            const perm = await Notification.requestPermission();
+            if (perm !== 'granted') return;
+        }
+        localStorage.setItem('notifEnabled', 'true');
+    } else {
+        localStorage.setItem('notifEnabled', 'false');
+    }
+    updateNotifBtn();
+};
+
 
 window.currentFocusedTeam = null;
 
@@ -296,7 +345,7 @@ window.displaySchedule = async function () {
                     : `<td rowspan="2" data-unscored-key="${m.key}" data-unscored-time="${m.predictedTime}" style="color:#64748b;font-style:italic;border-left:2px solid #334155;vertical-align:middle;text-align:center;white-space:nowrap;min-width:2.8rem;">—</td>`;
 
             const mobileCountdown = m.redScore <= -1 && m.predictedTime
-                ? `<div data-predicted-time="${m.predictedTime}" style="font-size:0.65em;color:#64748b;margin-top:2px;"></div>`
+                ? `<div data-predicted-time="${m.predictedTime}" data-match-key="${m.key}" style="font-size:0.65em;color:#64748b;margin-top:2px;"></div>`
                 : '';
             redRow.innerHTML = `
                 <td class="match-number" rowspan="2" onclick="viewMatchPrep('${m.key}')"
@@ -325,7 +374,7 @@ window.displaySchedule = async function () {
                     ? `<td onclick="viewMatchDetail('${m.key}')" style="cursor:pointer;border-left:2px solid #334155;text-align:center;color:#64748b;">⏩</td>`
                     : `<td data-unscored-key="${m.key}" data-unscored-time="${m.predictedTime}" style="color:#64748b;font-style:italic;border-left:2px solid #334155;">Upcoming</td>`;
             const desktopCountdown = m.redScore <= -1 && m.predictedTime
-                ? `<div data-predicted-time="${m.predictedTime}" style="font-size:0.65em;color:#64748b;margin-top:2px;"></div>`
+                ? `<div data-predicted-time="${m.predictedTime}" data-match-key="${m.key}" style="font-size:0.65em;color:#64748b;margin-top:2px;"></div>`
                 : '';
             row.innerHTML = `
                 <td class="match-number" onclick="viewMatchPrep('${m.key}')"
@@ -338,6 +387,7 @@ window.displaySchedule = async function () {
     clearInterval(_scheduleCountdownInterval);
     updateScheduleCountdowns();
     _scheduleCountdownInterval = setInterval(updateScheduleCountdowns, 1_000);
+    updateHomeBanner();
 };
 
 let prepChartInstance = null; // Global variable to handle chart destruction
@@ -347,6 +397,73 @@ let breakdownRadarChartBlue = null;
 const rightPanelHistory = [];
 
 let _scheduleCountdownInterval = null;
+
+// ── MATCH COUNTDOWN BANNER (team 1768) ────────────────────────────────────────
+let _bannerMatchNum  = null;
+let _bannerMatchTime = null;
+let _bannerAlliance  = null; // 'red' | 'blue'
+
+function updateBannerTick() {
+    const textEl = document.getElementById('match-countdown-text');
+    const banner = document.getElementById('match-countdown-banner');
+    if (!textEl || !_bannerMatchTime) return;
+
+    const now = Math.floor(Date.now() / 1000);
+    const remaining = _bannerMatchTime - now;
+
+    if (remaining < -120) {
+        // Well past predicted time with no score — refresh to find next match
+        updateHomeBanner();
+        return;
+    }
+
+    let countdown;
+    if (remaining <= 0) {
+        countdown = 'Starting now';
+    } else if (remaining >= 3600) {
+        const h = Math.floor(remaining / 3600);
+        const m = Math.floor((remaining % 3600) / 60);
+        countdown = `${h}h ${m}m`;
+    } else {
+        const m = Math.floor(remaining / 60);
+        const s = String(remaining % 60).padStart(2, '0');
+        countdown = m > 0 ? `${m}m ${s}s` : `${s}s`;
+    }
+
+    textEl.textContent = `QM ${_bannerMatchNum}  ·  ${countdown}`;
+    banner.style.display = 'flex';
+}
+
+async function updateHomeBanner() {
+    const banner = document.getElementById('match-countdown-banner');
+    const allianceEl = document.getElementById('match-countdown-alliance');
+    if (!banner) return;
+
+    const matches = await db.matches.orderBy('matchNumber').toArray();
+    const next = matches.find(m =>
+        m.redScore <= -1 &&
+        m.predictedTime &&
+        (m.red?.includes('1768') || m.blue?.includes('1768'))
+    );
+
+    if (!next) {
+        banner.style.display = 'none';
+        _bannerMatchTime = null;
+        return;
+    }
+
+    _bannerMatchNum  = next.matchNumber;
+    _bannerMatchTime = next.predictedTime;
+    _bannerAlliance  = next.red?.includes('1768') ? 'red' : 'blue';
+
+    if (allianceEl) {
+        allianceEl.textContent = _bannerAlliance === 'red' ? 'Red' : 'Blue';
+        allianceEl.style.color      = _bannerAlliance === 'red' ? '#fca5a5' : '#93c5fd';
+        allianceEl.style.background = _bannerAlliance === 'red' ? '#7f1d1d55' : '#1e3a5f55';
+    }
+
+    updateBannerTick();
+}
 
 function updateScheduleCountdowns() {
     const now = Math.floor(Date.now() / 1000);
@@ -364,6 +481,26 @@ function updateScheduleCountdowns() {
             const m = Math.floor(remaining / 60);
             const s = String(remaining % 60).padStart(2, '0');
             el.textContent = m > 0 ? `${m}m ${s}s` : `${s}s`;
+        }
+        // 5-minute warning for focused team's matches
+        const matchKey = el.dataset.matchKey;
+        if (matchKey && remaining > 0 && remaining <= 300) {
+            const notifId = `warn-${matchKey}`;
+            if (!_firedNotifIds.has(notifId)) {
+                const row = el.closest('tr');
+                const teams = (row?.dataset.teams || '').split(',').filter(Boolean);
+                const focused = window.currentFocusedTeam;
+                if (focused && teams.includes(focused)) {
+                    _firedNotifIds.add(notifId);
+                    const matchNum = matchKey.split('_qm')[1] || matchKey;
+                    const mins = Math.ceil(remaining / 60);
+                    fireNotif(
+                        `QM ${matchNum} in ~${mins} min`,
+                        `${teams.slice(0, 3).join(', ')} vs ${teams.slice(3).join(', ')}`,
+                        notifId
+                    );
+                }
+            }
         }
     });
     // Flip "Upcoming / —" cells to ⏩ once their predicted time passes
@@ -2283,6 +2420,9 @@ window.clearEvent = async function () {
         localStorage.removeItem(`webcasts_${eventKey}`);
 
         // Clear module-level caches so stale data doesn't persist across renders
+        _bannerMatchTime = null;
+        const _cb = document.getElementById('match-countdown-banner');
+        if (_cb) _cb.style.display = 'none';
         wlDetailCache = null;
         wlPreEventCache = null;
         wlComputedAsOf = null;
@@ -2961,6 +3101,12 @@ window.syncTBAMatches = async function () {
             .filter(m => m.comp_level === 'qm')
             .sort((a, b) => a.match_number - b.match_number);
 
+        // Snapshot already-scored matches before overwriting, for new-score notifications
+        const scoredBefore = new Set(
+            (await db.matches.where('eventKey').equals(eventKey).toArray())
+                .filter(m => m.redScore > -1).map(m => m.key)
+        );
+
         const records = qualMatches.map(m => ({
             key: m.key,
             eventKey,
@@ -2976,6 +3122,29 @@ window.syncTBAMatches = async function () {
             videos: (m.videos || []).filter(v => v.type === 'youtube').map(v => v.key),
         }));
         await db.matches.bulkPut(records);
+
+        // Notify for each newly posted score that involves the focused team
+        const focused = window.currentFocusedTeam;
+        if (focused) {
+            for (const r of records) {
+                if (r.redScore > -1 && !scoredBefore.has(r.key)) {
+                    const allTeams = [...(r.red || []), ...(r.blue || [])];
+                    if (allTeams.includes(focused)) {
+                        const notifId = `score-${r.key}`;
+                        if (!_firedNotifIds.has(notifId)) {
+                            _firedNotifIds.add(notifId);
+                            const redWon = r.redScore > r.blueScore;
+                            const result = redWon ? 'Red wins' : r.blueScore > r.redScore ? 'Blue wins' : 'Tie';
+                            fireNotif(
+                                `QM ${r.matchNumber} scored — ${result}`,
+                                `${r.redScore}–${r.blueScore} · Red: ${(r.red||[]).join(', ')} · Blue: ${(r.blue||[]).join(', ')}`,
+                                notifId
+                            );
+                        }
+                    }
+                }
+            }
+        }
 
         setSyncTimestamp('tbaMatches');
         watchListDirty = true;
@@ -9229,6 +9398,8 @@ const bootApp = async () => {
     // 1. Set the initial view (Home)
     initUIMode();
     initColorMode();
+    initNotifications();
+    setInterval(updateBannerTick, 1000);
     window.switchView('homeView');
 
     // 2. Load the cached data into the tables immediately
@@ -9237,6 +9408,7 @@ const bootApp = async () => {
     try {
         await displayTeams();        // Loads Statbotics cache
         await displaySchedule();     // Loads TBA Schedule cache
+        await updateHomeBanner();
         await displayTBATeams();     // Loads TBA OPR cache
         await renderAtAGlance();     // Loads at-a-glance overview
         console.log("Local cache successfully loaded into UI.");
