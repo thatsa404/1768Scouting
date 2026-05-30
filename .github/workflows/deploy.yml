@@ -29,6 +29,7 @@ jobs:
       - run: npm run build
         env:
           VITE_TBA_KEY: ${{ secrets.VITE_TBA_KEY }}
+          VITE_YOUTUBE_KEY: ${{ secrets.VITE_YOUTUBE_KEY }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
