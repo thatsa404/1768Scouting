@@ -926,6 +926,7 @@
         body.light-mode .match-number {
             color: #0f172a !important;
         }
+        body.light-mode #detailTeamQuipText { color: #475569; }
 
         /* ─── Mobile Bottom Nav ─── */
         .mobile-bottom-nav {
@@ -2160,7 +2161,13 @@
         style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); overflow-y:auto; padding:40px; box-sizing:border-box; z-index:100;">
         <div class="view-header-container">
             <button id="detailBackBtn" class="nav-btn" onclick="goBack()">← Back</button>
-            <h2 id="detailTeamLabel">Team --</h2>
+            <div style="flex:1;min-width:0;">
+                <h2 id="detailTeamLabel" style="margin:0;">Team --</h2>
+                <p id="detailTeamQuip" onclick="rerollQuip()" title="Click to re-roll"
+                    style="margin:2px 0 0;font-size:0.78em;line-height:1.3;cursor:pointer;">
+                    <span style="color:#475569;font-weight:700;font-size:0.85em;text-transform:uppercase;letter-spacing:0.07em;margin-right:5px;font-style:normal;">Intro</span><span id="detailTeamQuipText" style="color:#64748b;font-style:italic;"></span>
+                </p>
+            </div>
         </div>
 
         <div class="detail-tabs" id="teamDetailTabs">

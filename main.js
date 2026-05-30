@@ -1,6 +1,7 @@
 import Dexie from 'dexie';
 import Chart from 'chart.js/auto';
 import { getGameConfig, resolveColumnMap, aggregateScoutingData, processScoutingData, fuseScoutingWithTBA, indexObservationsByMatch, detectCumulativeReportingMode, EVENT_SOURCES as SCOUTING_SOURCES } from './games/registry.js';
+import { getTeamQuip, logFractionToTier, QUIP_TIERS } from './teamQuips.js';
 
 // 1. DATABASE SETUP
 // We use Dexie to handle larger storage (images/multiple events)
@@ -2191,15 +2192,21 @@ window.clearEvent = async function () {
         localStorage.removeItem(`tbaAlliances_${eventKey}`);
         localStorage.removeItem('mockDraftState');
         localStorage.removeItem('realDraftState');
+        localStorage.removeItem(`rpThresholds_${eventKey}`);
+        localStorage.removeItem(`wlCalibrationBeta_${eventKey}`);
+        localStorage.removeItem(`wlPreEventSnapshot_${eventKey}`);
 
         // Clear module-level caches so stale data doesn't persist across renders
         wlDetailCache = null;
         wlPreEventCache = null;
+        wlCalibrationBeta = 0.982;
+        watchListDirty = true;
 
         // Destroy chart instances so old data doesn't show on cleared canvases
         if (teamChartInstance) { teamChartInstance.destroy(); teamChartInstance = null; }
         if (tbaChartInstance) { tbaChartInstance.destroy(); tbaChartInstance = null; }
         if (matchInfluenceChartInstance) { matchInfluenceChartInstance.destroy(); matchInfluenceChartInstance = null; }
+        if (dashboardChartInstance) { dashboardChartInstance.destroy(); dashboardChartInstance = null; }
 
         await displayTeams();
         await displayTBATeams();
@@ -3624,6 +3631,54 @@ window.viewTeamDetail = async function (teamNumber, tab = lastDetailTab) {
 
     label.innerText = `Team ${teamNumber}: ${team.teamName || ''}`;
 
+    // Quip: log-scale EPA fraction determines tier + unique within-tier rank
+    {
+        const quipContainer = document.getElementById('detailTeamQuip');
+        const quipTextEl = document.getElementById('detailTeamQuipText');
+        const quipsEnabled = localStorage.getItem('quipsEnabled') === 'true';
+        if (quipContainer) quipContainer.style.display = quipsEnabled ? '' : 'none';
+        if (quipTextEl && quipsEnabled) {
+            const allTeams = await db.teams.where('eventKey').equals(team.eventKey).toArray();
+            let quipTier = 'B';
+            let rankInTier = null;
+            if (allTeams.length > 0) {
+                // Fused EPA: prefer scouting-fused, fall back to Statbotics currentEPA
+                const fusedCache = (() => { try { return JSON.parse(localStorage.getItem(`scoutingFusedStats_${team.eventKey}`)); } catch { return null; } })();
+                const gameConfig = getGameConfig(team.eventKey);
+                const getEPA = t => {
+                    const fr = fusedCache?.teams?.[String(t.teamNumber)];
+                    if (fr?.available && gameConfig?.computeFusedEPABreakdown) {
+                        return gameConfig.computeFusedEPABreakdown(fr.stats).total;
+                    }
+                    return t.currentEPA ?? 0;
+                };
+
+                const epas = allTeams.map(getEPA);
+                const logMin = Math.log(Math.max(Math.min(...epas), 0.1));
+                const logMax = Math.log(Math.max(Math.max(...epas), 0.1));
+                const getLogFraction = t => logMax > logMin
+                    ? Math.max(0, Math.min(1, (Math.log(Math.max(getEPA(t), 0.1)) - logMin) / (logMax - logMin)))
+                    : 0.5;
+
+                quipTier = logFractionToTier(getLogFraction(team));
+
+                // Rank within tier by log-fraction descending → unique quip slot per team
+                const tierPeers = allTeams
+                    .filter(t => logFractionToTier(getLogFraction(t)) === quipTier)
+                    .sort((a, b) => getLogFraction(b) - getLogFraction(a));
+                rankInTier = Math.max(tierPeers.findIndex(t => t.teamNumber === Number(teamNumber)), 0);
+            }
+            const randomMode = localStorage.getItem('quipRandomMode') === 'true';
+            quipTextEl.textContent = Number(teamNumber) === 1768
+                ? 'Mechanis Lupus.'
+                : getTeamQuip(Number(teamNumber), quipTier, randomMode, rankInTier, getQuipUserSeed());
+            if (quipContainer) {
+                quipContainer.dataset.tier = quipTier;
+                quipContainer.dataset.team = teamNumber;
+            }
+        }
+    }
+
     // --- FIX: The Safe Check ---
     // If analysis is null, provide default "blank" values
     const analysis = team.analysis || { ceiling: "—", lowerBound: "—", upperBound: "—" };
@@ -3745,7 +3800,7 @@ let wlPreEventCache = null;
 // Linear calibration factor: p_cal = 0.5 + wlCalibrationBeta*(p - 0.5).
 // 1.0 = no correction; <1.0 = shrink toward 50% (fixes overconfidence).
 // Set by runBacktest → applyWLCalibration(), resets to 1.0 on page load.
-let wlCalibrationBeta = 1.0;
+let wlCalibrationBeta = 0.982;
 
 window.switchScheduleTab = function (tab) {
     ['matches', 'watchlist'].forEach(t => {
@@ -3813,7 +3868,7 @@ function wlAllianceSigmaRel(teams, teamsMap, predicted) {
 // Blended residual pool: empirical relative residuals + N_PRIOR synthetic Gaussian draws.
 // Prior weight = 10 / (empirical_count + 10), shrinking as real data accumulates.
 function wlBuildRelPool(relResiduals, teams, teamsMap, predicted) {
-    const N_PRIOR  = 10;
+    const N_PRIOR  = 500;
     const sigmaRel = wlAllianceSigmaRel(teams, teamsMap, predicted);
     const prior    = Array.from({ length: N_PRIOR }, () => sigmaRel * wlGaussian());
     return [...relResiduals, ...prior];
@@ -3824,7 +3879,7 @@ function wlBuildRelPool(relResiduals, teams, teamsMap, predicted) {
 // Sampling from this pool for win probability captures shared match-level noise (both alliances
 // affected by field conditions, refs, etc.), preventing probabilities from reaching 100%/0%.
 function wlBuildDiffPool(diffResiduals, redTeams, blueTeams, teamsMap, redPred, bluePred) {
-    const N_PRIOR   = 10;
+    const N_PRIOR   = 500;
     const sigmaRed  = wlAllianceSigmaRel(redTeams,  teamsMap, redPred)  * redPred;
     const sigmaBlue = wlAllianceSigmaRel(blueTeams, teamsMap, bluePred) * bluePred;
     const sigmaDiff = Math.sqrt(sigmaRed * sigmaRed + sigmaBlue * sigmaBlue);
@@ -4007,9 +4062,25 @@ function wlComputeActualRP(playedMatches) {
 }
 
 // Simulate all remaining matches N times. Returns { [teamNumber]: { mean, p10, p90, meanRP } }.
-function wlSimulateStandings(baseRP, unplayed, matchPredictions, effectiveThresholds, N = 500) {
+// meanRP is computed analytically (sum of expected values) rather than by sampling, so it is
+// stable across recomputes. Rank distribution (mean/p10/p90) still uses Monte Carlo.
+function wlSimulateStandings(baseRP, unplayed, matchPredictions, effectiveThresholds, N = 1000) {
+    // Analytical expected RP: deterministic, no sampling variance.
+    const analyticalRP = { ...baseRP };
+    for (const m of unplayed) {
+        const pred = matchPredictions[m.key];
+        if (!pred) continue;
+        const blueProb   = Math.max(0, 1 - pred.redProb - pred.tieProb);
+        const rExpWin    = 3 * pred.redProb + pred.tieProb;
+        const bExpWin    = 3 * blueProb     + pred.tieProb;
+        const rExpBonus  = effectiveThresholds.reduce((s, rpt) => s + (pred.rpProbs.red[rpt.rpField]  ?? 0), 0);
+        const bExpBonus  = effectiveThresholds.reduce((s, rpt) => s + (pred.rpProbs.blue[rpt.rpField] ?? 0), 0);
+        for (const tn of (m.red  ?? [])) analyticalRP[String(tn)] = (analyticalRP[String(tn)] ?? 0) + rExpWin + rExpBonus;
+        for (const tn of (m.blue ?? [])) analyticalRP[String(tn)] = (analyticalRP[String(tn)] ?? 0) + bExpWin + bExpBonus;
+    }
+
+    // Monte Carlo for rank distribution only.
     const rankSamples = {};
-    const rpSums      = {};
     for (let i = 0; i < N; i++) {
         const simRP = { ...baseRP };
         for (const m of unplayed) {
@@ -4027,19 +4098,17 @@ function wlSimulateStandings(baseRP, unplayed, matchPredictions, effectiveThresh
             for (const tn of (m.red  ?? [])) simRP[String(tn)] = (simRP[String(tn)] ?? 0) + rRP;
             for (const tn of (m.blue ?? [])) simRP[String(tn)] = (simRP[String(tn)] ?? 0) + bRP;
         }
-        const ranked = Object.entries(simRP).sort((a, b) => b[1] - a[1]);
-        ranked.forEach(([tn, rp], idx) => {
+        Object.entries(simRP).sort((a, b) => b[1] - a[1]).forEach(([tn], idx) => {
             (rankSamples[tn] = rankSamples[tn] ?? []).push(idx + 1);
-            rpSums[tn] = (rpSums[tn] ?? 0) + rp;
         });
     }
-    return Object.fromEntries(Object.entries(rankSamples).map(([tn, rs]) => {
-        rs.sort((a, b) => a - b);
+    return Object.fromEntries(Object.keys(analyticalRP).map(tn => {
+        const rs = (rankSamples[tn] ?? []).sort((a, b) => a - b);
         return [tn, {
-            mean:   +(rs.reduce((s, r) => s + r, 0) / rs.length).toFixed(1),
-            p10:    rs[Math.floor(rs.length * 0.10)],
-            p90:    rs[Math.floor(rs.length * 0.90)],
-            meanRP: +(rpSums[tn] / N).toFixed(1),
+            mean:   rs.length ? +(rs.reduce((s, r) => s + r, 0) / rs.length).toFixed(1) : null,
+            p10:    rs[Math.floor(rs.length * 0.10)] ?? null,
+            p90:    rs[Math.floor(rs.length * 0.90)] ?? null,
+            meanRP: +analyticalRP[tn].toFixed(1),
         }];
     }));
 }
@@ -4995,6 +5064,32 @@ window.toggleColorMode = function () {
     const current = localStorage.getItem('colorMode') || 'dark';
     window.setColorMode(current === 'dark' ? 'light' : 'dark');
 };
+
+window.rerollQuip = function () {
+    const container = document.getElementById('detailTeamQuip');
+    const textEl = document.getElementById('detailTeamQuipText');
+    if (!container || !container.dataset.tier || !textEl) return;
+    // Re-roll always uses random tier-based quip, bypassing any event-specific quip
+    textEl.textContent = getTeamQuip(Number(container.dataset.team), container.dataset.tier, true);
+    container.dataset.hasEventQuip = 'false';
+};
+
+window.toggleQuipsEnabled = function () {
+    const nowEnabled = !(localStorage.getItem('quipsEnabled') === 'true');
+    localStorage.setItem('quipsEnabled', String(nowEnabled));
+    const el = document.getElementById('detailTeamQuip');
+    if (el) el.style.display = nowEnabled ? '' : 'none';
+    renderDevTab();
+};
+
+function getQuipUserSeed() {
+    let seed = parseInt(localStorage.getItem('quipUserSeed'), 10);
+    if (!seed || isNaN(seed)) {
+        seed = Math.floor(Math.random() * 0xffffffff);
+        localStorage.setItem('quipUserSeed', String(seed));
+    }
+    return seed;
+}
 
 function initColorMode() {
     const saved = localStorage.getItem('colorMode') || 'dark';
@@ -6808,7 +6903,76 @@ async function renderDevTab() {
             </div>
         </details>`;
 
-    el.innerHTML = `<div style="padding:12px;">${wlControlsHtml}${calibrationHtml}${fieldExplorerHtml}${timeMachineHtml}</div>`;
+    // ── Quip Tier Breakdown ─────────────────────────────────────────────────
+    const quipsEnabled = localStorage.getItem('quipsEnabled') === 'true';
+    let quipTierHtml = `<label style="display:flex;align-items:center;gap:7px;font-size:0.8em;color:#475569;cursor:pointer;margin-bottom:14px;">
+        <input type="checkbox" onchange="toggleQuipsEnabled()" ${quipsEnabled ? 'checked' : ''} style="cursor:pointer;accent-color:#4ade80;">
+        Show team quips
+    </label>`;
+    if (quipsEnabled) {
+        const eventTeams = eventKey ? await db.teams.where('eventKey').equals(eventKey).toArray() : [];
+        if (eventTeams.length > 0) {
+            const fusedCache = (() => { try { return JSON.parse(localStorage.getItem(`scoutingFusedStats_${eventKey}`)); } catch { return null; } })();
+            const gameConfig = getGameConfig(eventKey);
+            const getEPA = t => {
+                const fr = fusedCache?.teams?.[String(t.teamNumber)];
+                if (fr?.available && gameConfig?.computeFusedEPABreakdown) {
+                    return gameConfig.computeFusedEPABreakdown(fr.stats).total;
+                }
+                return t.currentEPA ?? 0;
+            };
+            const epas = eventTeams.map(getEPA);
+            const logMin = Math.log(Math.max(Math.min(...epas), 0.1));
+            const logMax = Math.log(Math.max(Math.max(...epas), 0.1));
+            const getLogFrac = t => logMax > logMin
+                ? Math.max(0, Math.min(1, (Math.log(Math.max(getEPA(t), 0.1)) - logMin) / (logMax - logMin)))
+                : 0.5;
+
+            // Count teams per tier and collect their numbers
+            const tierBuckets = Object.fromEntries(QUIP_TIERS.map(({ name }) => [name, []]));
+            for (const t of eventTeams) {
+                const tier = logFractionToTier(getLogFrac(t));
+                tierBuckets[tier].push({ tn: t.teamNumber, frac: getLogFrac(t) });
+            }
+
+            const tierColors = { Elite: '#f59e0b', S: '#4ade80', A: '#a78bfa', B: '#60a5fa', C: '#94a3b8' };
+            const rows = QUIP_TIERS.map(({ name, min }, i) => {
+                const next = QUIP_TIERS[i - 1];
+                const range = next ? `${(min * 100).toFixed(0)}–${(next.min * 100).toFixed(0)}%` : `${(min * 100).toFixed(0)}–100%`;
+                const bucket = tierBuckets[name] ?? [];
+                bucket.sort((a, b) => b.frac - a.frac);
+                const chips = bucket.map(({ tn, frac }) =>
+                    `<span style="display:inline-block;padding:1px 6px;border-radius:10px;background:${tierColors[name]}22;border:1px solid ${tierColors[name]}55;color:${tierColors[name]};font-size:0.75em;margin:1px;">${tn} <span style="opacity:0.6;">${(frac * 100).toFixed(1)}%</span></span>`
+                ).join('');
+                return `<tr style="border-bottom:1px solid #1e293b;">
+                    <td style="padding:5px 8px;font-weight:700;color:${tierColors[name]};">${name}</td>
+                    <td style="padding:5px 8px;color:#64748b;font-size:0.82em;">${range}</td>
+                    <td style="padding:5px 8px;text-align:center;color:#e2e8f0;font-weight:600;">${bucket.length}</td>
+                    <td style="padding:5px 8px;">${chips}</td>
+                </tr>`;
+            }).join('');
+
+            quipTierHtml += `
+            <details style="margin-bottom:16px;border:1px solid #1e293b;border-radius:8px;overflow:hidden;">
+                <summary style="cursor:pointer;color:#e2e8f0;font-weight:700;padding:10px 14px;background:#0f172a;font-size:1em;letter-spacing:0.02em;">
+                    Quip Tier Breakdown <span style="color:#475569;font-weight:400;font-size:0.85em;margin-left:8px;">${eventTeams.length} teams · ${eventKey}</span>
+                </summary>
+                <div style="padding:10px;overflow-x:auto;">
+                    <table style="border-collapse:collapse;width:100%;font-size:0.85em;">
+                        <thead><tr style="color:#475569;font-size:0.78em;border-bottom:1px solid #334155;">
+                            <th style="padding:4px 8px;text-align:left;">Tier</th>
+                            <th style="padding:4px 8px;text-align:left;">Log-fraction range</th>
+                            <th style="padding:4px 8px;text-align:center;">Count</th>
+                            <th style="padding:4px 8px;text-align:left;">Teams (fraction)</th>
+                        </tr></thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+            </details>`;
+        }
+    }
+
+    el.innerHTML = `<div style="padding:12px;">${quipTierHtml}${wlControlsHtml}${calibrationHtml}${fieldExplorerHtml}${timeMachineHtml}</div>`;
 }
 
 window.applyTimeMachineSnapshot = async function () {

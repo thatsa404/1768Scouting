@@ -1,6 +1,6 @@
 {
   "eventKey": "2026bc",
-  "archived": "2026-05-29T21:27:29.095Z",
+  "archived": "2026-05-30T00:33:04.523Z",
   "scoutingRows": [],
   "pitRows": [
     {
@@ -86746,9 +86746,3473 @@
       "lastUpdated": 1780084234914
     }
   ],
-  "tbaTeams": [],
-  "matches": [],
+  "tbaTeams": [
+    {
+      "teamNumber": 48,
+      "teamKey": "frc48",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 126,
+      "teamKey": "frc126",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 131,
+      "teamKey": "frc131",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 151,
+      "teamKey": "frc151",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 157,
+      "teamKey": "frc157",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 166,
+      "teamKey": "frc166",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 173,
+      "teamKey": "frc173",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 190,
+      "teamKey": "frc190",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 238,
+      "teamKey": "frc238",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 271,
+      "teamKey": "frc271",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 467,
+      "teamKey": "frc467",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 516,
+      "teamKey": "frc516",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 694,
+      "teamKey": "frc694",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 1155,
+      "teamKey": "frc1155",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 1277,
+      "teamKey": "frc1277",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 1474,
+      "teamKey": "frc1474",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 1591,
+      "teamKey": "frc1591",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 1729,
+      "teamKey": "frc1729",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 1735,
+      "teamKey": "frc1735",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 1768,
+      "teamKey": "frc1768",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 1922,
+      "teamKey": "frc1922",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 2262,
+      "teamKey": "frc2262",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 2265,
+      "teamKey": "frc2265",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 2342,
+      "teamKey": "frc2342",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 2370,
+      "teamKey": "frc2370",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 2423,
+      "teamKey": "frc2423",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 3461,
+      "teamKey": "frc3461",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 4122,
+      "teamKey": "frc4122",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 4176,
+      "teamKey": "frc4176",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 4546,
+      "teamKey": "frc4546",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 4575,
+      "teamKey": "frc4575",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 5494,
+      "teamKey": "frc5494",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 5735,
+      "teamKey": "frc5735",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 5813,
+      "teamKey": "frc5813",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 6153,
+      "teamKey": "frc6153",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 6731,
+      "teamKey": "frc6731",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 6933,
+      "teamKey": "frc6933",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 7153,
+      "teamKey": "frc7153",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 8085,
+      "teamKey": "frc8085",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 8544,
+      "teamKey": "frc8544",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 8567,
+      "teamKey": "frc8567",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 8708,
+      "teamKey": "frc8708",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 8724,
+      "teamKey": "frc8724",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 9990,
+      "teamKey": "frc9990",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 10063,
+      "teamKey": "frc10063",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 10262,
+      "teamKey": "frc10262",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 10910,
+      "teamKey": "frc10910",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    },
+    {
+      "teamNumber": 11175,
+      "teamKey": "frc11175",
+      "eventKey": "2026bc",
+      "opr": 0,
+      "dpr": 0,
+      "ccwm": 0,
+      "autoOPR": null,
+      "teleopOPR": null,
+      "endgameOPR": null,
+      "lastUpdated": 1780101041751
+    }
+  ],
+  "matches": [
+    {
+      "key": "2026bc_qm1",
+      "eventKey": "2026bc",
+      "matchNumber": 1,
+      "red": [
+        "8544",
+        "1768",
+        "5494"
+      ],
+      "blue": [
+        "4122",
+        "11175",
+        "2423"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780149600,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm10",
+      "eventKey": "2026bc",
+      "matchNumber": 10,
+      "red": [
+        "6153",
+        "4546",
+        "157"
+      ],
+      "blue": [
+        "8708",
+        "8544",
+        "173"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780154460,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm11",
+      "eventKey": "2026bc",
+      "matchNumber": 11,
+      "red": [
+        "11175",
+        "1155",
+        "4575"
+      ],
+      "blue": [
+        "238",
+        "1922",
+        "4176"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780155000,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm12",
+      "eventKey": "2026bc",
+      "matchNumber": 12,
+      "red": [
+        "694",
+        "2342",
+        "4122"
+      ],
+      "blue": [
+        "5735",
+        "10262",
+        "1474"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780155540,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm13",
+      "eventKey": "2026bc",
+      "matchNumber": 13,
+      "red": [
+        "8085",
+        "48",
+        "1729"
+      ],
+      "blue": [
+        "2265",
+        "166",
+        "1735"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780156080,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm14",
+      "eventKey": "2026bc",
+      "matchNumber": 14,
+      "red": [
+        "2262",
+        "5494",
+        "9990"
+      ],
+      "blue": [
+        "467",
+        "7153",
+        "151"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780156620,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm15",
+      "eventKey": "2026bc",
+      "matchNumber": 15,
+      "red": [
+        "10063",
+        "2370",
+        "6731"
+      ],
+      "blue": [
+        "131",
+        "126",
+        "1277"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780157160,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm16",
+      "eventKey": "2026bc",
+      "matchNumber": 16,
+      "red": [
+        "516",
+        "10910",
+        "3461"
+      ],
+      "blue": [
+        "2423",
+        "190",
+        "5813"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780157700,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm17",
+      "eventKey": "2026bc",
+      "matchNumber": 17,
+      "red": [
+        "1474",
+        "173",
+        "238"
+      ],
+      "blue": [
+        "8544",
+        "6933",
+        "8724"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780158240,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm18",
+      "eventKey": "2026bc",
+      "matchNumber": 18,
+      "red": [
+        "11175",
+        "4176",
+        "8567"
+      ],
+      "blue": [
+        "10262",
+        "4546",
+        "8085"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780158780,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm19",
+      "eventKey": "2026bc",
+      "matchNumber": 19,
+      "red": [
+        "1591",
+        "9990",
+        "7153"
+      ],
+      "blue": [
+        "4122",
+        "271",
+        "1735"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780159320,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm2",
+      "eventKey": "2026bc",
+      "matchNumber": 2,
+      "red": [
+        "1591",
+        "10262",
+        "694"
+      ],
+      "blue": [
+        "1922",
+        "6153",
+        "8724"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780150140,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm20",
+      "eventKey": "2026bc",
+      "matchNumber": 20,
+      "red": [
+        "4575",
+        "5735",
+        "10063"
+      ],
+      "blue": [
+        "6731",
+        "2265",
+        "1768"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780159860,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm21",
+      "eventKey": "2026bc",
+      "matchNumber": 21,
+      "red": [
+        "694",
+        "1277",
+        "1729"
+      ],
+      "blue": [
+        "10910",
+        "2262",
+        "5813"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780164000,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm22",
+      "eventKey": "2026bc",
+      "matchNumber": 22,
+      "red": [
+        "1922",
+        "157",
+        "48"
+      ],
+      "blue": [
+        "3461",
+        "467",
+        "2423"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780164540,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm23",
+      "eventKey": "2026bc",
+      "matchNumber": 23,
+      "red": [
+        "8708",
+        "151",
+        "6153"
+      ],
+      "blue": [
+        "2370",
+        "126",
+        "516"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780165080,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm24",
+      "eventKey": "2026bc",
+      "matchNumber": 24,
+      "red": [
+        "1155",
+        "131",
+        "2342"
+      ],
+      "blue": [
+        "5494",
+        "166",
+        "190"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780165620,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm25",
+      "eventKey": "2026bc",
+      "matchNumber": 25,
+      "red": [
+        "8567",
+        "1735",
+        "10262"
+      ],
+      "blue": [
+        "5735",
+        "1768",
+        "238"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780166160,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm26",
+      "eventKey": "2026bc",
+      "matchNumber": 26,
+      "red": [
+        "271",
+        "11175",
+        "9990"
+      ],
+      "blue": [
+        "10910",
+        "6731",
+        "8085"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780166700,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm27",
+      "eventKey": "2026bc",
+      "matchNumber": 27,
+      "red": [
+        "5813",
+        "10063",
+        "157"
+      ],
+      "blue": [
+        "1591",
+        "48",
+        "2262"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780167240,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm28",
+      "eventKey": "2026bc",
+      "matchNumber": 28,
+      "red": [
+        "126",
+        "2265",
+        "151"
+      ],
+      "blue": [
+        "8544",
+        "1922",
+        "4546"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780167780,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm29",
+      "eventKey": "2026bc",
+      "matchNumber": 29,
+      "red": [
+        "2342",
+        "2423",
+        "516"
+      ],
+      "blue": [
+        "173",
+        "694",
+        "1155"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780168320,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm3",
+      "eventKey": "2026bc",
+      "matchNumber": 3,
+      "red": [
+        "238",
+        "2342",
+        "271"
+      ],
+      "blue": [
+        "4546",
+        "48",
+        "2370"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780150680,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm30",
+      "eventKey": "2026bc",
+      "matchNumber": 30,
+      "red": [
+        "467",
+        "4176",
+        "6153"
+      ],
+      "blue": [
+        "1474",
+        "3461",
+        "131"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780168860,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm31",
+      "eventKey": "2026bc",
+      "matchNumber": 31,
+      "red": [
+        "190",
+        "4122",
+        "8724"
+      ],
+      "blue": [
+        "1729",
+        "4575",
+        "2370"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780169400,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm32",
+      "eventKey": "2026bc",
+      "matchNumber": 32,
+      "red": [
+        "7153",
+        "6933",
+        "166"
+      ],
+      "blue": [
+        "1277",
+        "5494",
+        "8708"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780169940,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm33",
+      "eventKey": "2026bc",
+      "matchNumber": 33,
+      "red": [
+        "5813",
+        "151",
+        "6731"
+      ],
+      "blue": [
+        "238",
+        "157",
+        "10262"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780170480,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm34",
+      "eventKey": "2026bc",
+      "matchNumber": 34,
+      "red": [
+        "2423",
+        "10063",
+        "4546"
+      ],
+      "blue": [
+        "9990",
+        "1735",
+        "5735"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780171020,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm35",
+      "eventKey": "2026bc",
+      "matchNumber": 35,
+      "red": [
+        "48",
+        "467",
+        "10910"
+      ],
+      "blue": [
+        "1155",
+        "1768",
+        "126"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780171560,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm36",
+      "eventKey": "2026bc",
+      "matchNumber": 36,
+      "red": [
+        "131",
+        "4122",
+        "8544"
+      ],
+      "blue": [
+        "8724",
+        "8085",
+        "694"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780172100,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm37",
+      "eventKey": "2026bc",
+      "matchNumber": 37,
+      "red": [
+        "516",
+        "1474",
+        "4176"
+      ],
+      "blue": [
+        "5494",
+        "1729",
+        "8567"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780172640,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm38",
+      "eventKey": "2026bc",
+      "matchNumber": 38,
+      "red": [
+        "4575",
+        "6153",
+        "2265"
+      ],
+      "blue": [
+        "6933",
+        "2342",
+        "1277"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780173180,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm39",
+      "eventKey": "2026bc",
+      "matchNumber": 39,
+      "red": [
+        "3461",
+        "1591",
+        "190"
+      ],
+      "blue": [
+        "11175",
+        "7153",
+        "8708"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780173720,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm4",
+      "eventKey": "2026bc",
+      "matchNumber": 4,
+      "red": [
+        "8567",
+        "1155",
+        "157"
+      ],
+      "blue": [
+        "9990",
+        "6933",
+        "10063"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780151220,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm40",
+      "eventKey": "2026bc",
+      "matchNumber": 40,
+      "red": [
+        "2370",
+        "271",
+        "173"
+      ],
+      "blue": [
+        "2262",
+        "166",
+        "1922"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780174260,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm41",
+      "eventKey": "2026bc",
+      "matchNumber": 41,
+      "red": [
+        "48",
+        "5813",
+        "131"
+      ],
+      "blue": [
+        "151",
+        "5735",
+        "4122"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780178400,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm42",
+      "eventKey": "2026bc",
+      "matchNumber": 42,
+      "red": [
+        "5494",
+        "694",
+        "467"
+      ],
+      "blue": [
+        "4546",
+        "238",
+        "8567"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780178940,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm43",
+      "eventKey": "2026bc",
+      "matchNumber": 43,
+      "red": [
+        "8724",
+        "10910",
+        "1155"
+      ],
+      "blue": [
+        "1735",
+        "6153",
+        "6731"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780179480,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm44",
+      "eventKey": "2026bc",
+      "matchNumber": 44,
+      "red": [
+        "10262",
+        "1729",
+        "6933"
+      ],
+      "blue": [
+        "10063",
+        "7153",
+        "3461"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780180020,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm45",
+      "eventKey": "2026bc",
+      "matchNumber": 45,
+      "red": [
+        "8708",
+        "2262",
+        "126"
+      ],
+      "blue": [
+        "2342",
+        "8085",
+        "11175"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780180560,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm46",
+      "eventKey": "2026bc",
+      "matchNumber": 46,
+      "red": [
+        "4176",
+        "190",
+        "271"
+      ],
+      "blue": [
+        "157",
+        "516",
+        "2265"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780181100,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm47",
+      "eventKey": "2026bc",
+      "matchNumber": 47,
+      "red": [
+        "173",
+        "9990",
+        "1922"
+      ],
+      "blue": [
+        "1768",
+        "1277",
+        "1474"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780181640,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm48",
+      "eventKey": "2026bc",
+      "matchNumber": 48,
+      "red": [
+        "2370",
+        "8544",
+        "2423"
+      ],
+      "blue": [
+        "166",
+        "4575",
+        "1591"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780182180,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm49",
+      "eventKey": "2026bc",
+      "matchNumber": 49,
+      "red": [
+        "4546",
+        "6731",
+        "694"
+      ],
+      "blue": [
+        "1729",
+        "1155",
+        "7153"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780182720,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm5",
+      "eventKey": "2026bc",
+      "matchNumber": 5,
+      "red": [
+        "173",
+        "1277",
+        "4575"
+      ],
+      "blue": [
+        "467",
+        "8708",
+        "5813"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780151760,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm50",
+      "eventKey": "2026bc",
+      "matchNumber": 50,
+      "red": [
+        "10063",
+        "8724",
+        "5494"
+      ],
+      "blue": [
+        "8085",
+        "5813",
+        "6153"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780183260,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm51",
+      "eventKey": "2026bc",
+      "matchNumber": 51,
+      "red": [
+        "4122",
+        "8708",
+        "3461"
+      ],
+      "blue": [
+        "151",
+        "8567",
+        "271"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780183800,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm52",
+      "eventKey": "2026bc",
+      "matchNumber": 52,
+      "red": [
+        "126",
+        "9990",
+        "190"
+      ],
+      "blue": [
+        "48",
+        "4176",
+        "173"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780184340,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm53",
+      "eventKey": "2026bc",
+      "matchNumber": 53,
+      "red": [
+        "131",
+        "238",
+        "2265"
+      ],
+      "blue": [
+        "2423",
+        "1591",
+        "1474"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780231500,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm54",
+      "eventKey": "2026bc",
+      "matchNumber": 54,
+      "red": [
+        "2262",
+        "516",
+        "10262"
+      ],
+      "blue": [
+        "4575",
+        "8544",
+        "10910"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780232040,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm55",
+      "eventKey": "2026bc",
+      "matchNumber": 55,
+      "red": [
+        "6933",
+        "5735",
+        "11175"
+      ],
+      "blue": [
+        "166",
+        "2370",
+        "467"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780232580,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm56",
+      "eventKey": "2026bc",
+      "matchNumber": 56,
+      "red": [
+        "1735",
+        "1922",
+        "1277"
+      ],
+      "blue": [
+        "1768",
+        "157",
+        "2342"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780233120,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm57",
+      "eventKey": "2026bc",
+      "matchNumber": 57,
+      "red": [
+        "7153",
+        "8567",
+        "4122"
+      ],
+      "blue": [
+        "6153",
+        "173",
+        "126"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780233660,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm58",
+      "eventKey": "2026bc",
+      "matchNumber": 58,
+      "red": [
+        "4176",
+        "694",
+        "8708"
+      ],
+      "blue": [
+        "2265",
+        "10063",
+        "48"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780234200,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm59",
+      "eventKey": "2026bc",
+      "matchNumber": 59,
+      "red": [
+        "190",
+        "10262",
+        "8544"
+      ],
+      "blue": [
+        "271",
+        "131",
+        "5494"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780234740,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm6",
+      "eventKey": "2026bc",
+      "matchNumber": 6,
+      "red": [
+        "166",
+        "10910",
+        "151"
+      ],
+      "blue": [
+        "7153",
+        "2265",
+        "4176"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780152300,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm60",
+      "eventKey": "2026bc",
+      "matchNumber": 60,
+      "red": [
+        "3461",
+        "8724",
+        "4575"
+      ],
+      "blue": [
+        "9990",
+        "4546",
+        "166"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780235280,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm61",
+      "eventKey": "2026bc",
+      "matchNumber": 61,
+      "red": [
+        "157",
+        "1474",
+        "1735"
+      ],
+      "blue": [
+        "5813",
+        "11175",
+        "2370"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780235820,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm62",
+      "eventKey": "2026bc",
+      "matchNumber": 62,
+      "red": [
+        "1768",
+        "1591",
+        "467"
+      ],
+      "blue": [
+        "6731",
+        "1729",
+        "2342"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780236360,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm63",
+      "eventKey": "2026bc",
+      "matchNumber": 63,
+      "red": [
+        "1277",
+        "2262",
+        "5735"
+      ],
+      "blue": [
+        "1155",
+        "516",
+        "238"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780236900,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm64",
+      "eventKey": "2026bc",
+      "matchNumber": 64,
+      "red": [
+        "151",
+        "8085",
+        "1922"
+      ],
+      "blue": [
+        "10910",
+        "2423",
+        "6933"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780237440,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm65",
+      "eventKey": "2026bc",
+      "matchNumber": 65,
+      "red": [
+        "6153",
+        "5494",
+        "7153"
+      ],
+      "blue": [
+        "271",
+        "4575",
+        "48"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780237980,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm66",
+      "eventKey": "2026bc",
+      "matchNumber": 66,
+      "red": [
+        "2265",
+        "5813",
+        "8544"
+      ],
+      "blue": [
+        "8567",
+        "2370",
+        "9990"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780238520,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm67",
+      "eventKey": "2026bc",
+      "matchNumber": 67,
+      "red": [
+        "126",
+        "3461",
+        "166"
+      ],
+      "blue": [
+        "694",
+        "1735",
+        "1768"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780239060,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm68",
+      "eventKey": "2026bc",
+      "matchNumber": 68,
+      "red": [
+        "2342",
+        "467",
+        "4546"
+      ],
+      "blue": [
+        "516",
+        "4122",
+        "10063"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780239600,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm69",
+      "eventKey": "2026bc",
+      "matchNumber": 69,
+      "red": [
+        "1277",
+        "8724",
+        "11175"
+      ],
+      "blue": [
+        "4176",
+        "2423",
+        "5735"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780240140,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm7",
+      "eventKey": "2026bc",
+      "matchNumber": 7,
+      "red": [
+        "5735",
+        "126",
+        "8085"
+      ],
+      "blue": [
+        "1474",
+        "190",
+        "1729"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780152840,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm70",
+      "eventKey": "2026bc",
+      "matchNumber": 70,
+      "red": [
+        "8085",
+        "173",
+        "1591"
+      ],
+      "blue": [
+        "10262",
+        "151",
+        "1155"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780240680,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm71",
+      "eventKey": "2026bc",
+      "matchNumber": 71,
+      "red": [
+        "1729",
+        "238",
+        "10910"
+      ],
+      "blue": [
+        "157",
+        "8708",
+        "131"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780241220,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm72",
+      "eventKey": "2026bc",
+      "matchNumber": 72,
+      "red": [
+        "1922",
+        "1474",
+        "6933"
+      ],
+      "blue": [
+        "190",
+        "6731",
+        "2262"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780241760,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm8",
+      "eventKey": "2026bc",
+      "matchNumber": 8,
+      "red": [
+        "6731",
+        "131",
+        "516"
+      ],
+      "blue": [
+        "1735",
+        "3461",
+        "2262"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780153380,
+      "videos": []
+    },
+    {
+      "key": "2026bc_qm9",
+      "eventKey": "2026bc",
+      "matchNumber": 9,
+      "red": [
+        "6933",
+        "8567",
+        "1768"
+      ],
+      "blue": [
+        "8724",
+        "271",
+        "1591"
+      ],
+      "redScore": -1,
+      "blueScore": -1,
+      "predictedTime": 1780153920,
+      "videos": []
+    }
+  ],
   "tbaAlliances": null,
   "calibrationBeta": null,
-  "preEventSnapshot": null
+  "preEventSnapshot": {
+    "computed": "2026-05-30T00:30:51.063Z",
+    "rankDistrib": {
+      "48": {
+        "mean": 11.4,
+        "p10": 7,
+        "p90": 16,
+        "meanRP": 25.9
+      },
+      "126": {
+        "mean": 25.8,
+        "p10": 18,
+        "p90": 34,
+        "meanRP": 18.3
+      },
+      "131": {
+        "mean": 15,
+        "p10": 10,
+        "p90": 20,
+        "meanRP": 23.4
+      },
+      "151": {
+        "mean": 28.6,
+        "p10": 22,
+        "p90": 37,
+        "meanRP": 17.2
+      },
+      "157": {
+        "mean": 31.7,
+        "p10": 24,
+        "p90": 39,
+        "meanRP": 15.9
+      },
+      "166": {
+        "mean": 6.7,
+        "p10": 5,
+        "p90": 8,
+        "meanRP": 31
+      },
+      "173": {
+        "mean": 20.4,
+        "p10": 12,
+        "p90": 28,
+        "meanRP": 20.9
+      },
+      "190": {
+        "mean": 4,
+        "p10": 2,
+        "p90": 6,
+        "meanRP": 34.9
+      },
+      "238": {
+        "mean": 6,
+        "p10": 4,
+        "p90": 8,
+        "meanRP": 32.2
+      },
+      "271": {
+        "mean": 29.6,
+        "p10": 21,
+        "p90": 38,
+        "meanRP": 16.9
+      },
+      "467": {
+        "mean": 14.7,
+        "p10": 9,
+        "p90": 22,
+        "meanRP": 23.9
+      },
+      "516": {
+        "mean": 25.7,
+        "p10": 17,
+        "p90": 35,
+        "meanRP": 18.5
+      },
+      "694": {
+        "mean": 2.6,
+        "p10": 1,
+        "p90": 5,
+        "meanRP": 37.5
+      },
+      "1155": {
+        "mean": 27.4,
+        "p10": 21,
+        "p90": 33,
+        "meanRP": 17.9
+      },
+      "1277": {
+        "mean": 32.5,
+        "p10": 23,
+        "p90": 41,
+        "meanRP": 15.8
+      },
+      "1474": {
+        "mean": 22.8,
+        "p10": 14,
+        "p90": 32,
+        "meanRP": 19.9
+      },
+      "1591": {
+        "mean": 12.8,
+        "p10": 9,
+        "p90": 17,
+        "meanRP": 25
+      },
+      "1729": {
+        "mean": 21.8,
+        "p10": 14,
+        "p90": 30,
+        "meanRP": 20.4
+      },
+      "1735": {
+        "mean": 42.8,
+        "p10": 38,
+        "p90": 46,
+        "meanRP": 10.5
+      },
+      "1768": {
+        "mean": 1.4,
+        "p10": 1,
+        "p90": 2,
+        "meanRP": 40.4
+      },
+      "1922": {
+        "mean": 9.1,
+        "p10": 7,
+        "p90": 12,
+        "meanRP": 28.5
+      },
+      "2262": {
+        "mean": 38.7,
+        "p10": 30,
+        "p90": 46,
+        "meanRP": 12.8
+      },
+      "2265": {
+        "mean": 29.9,
+        "p10": 22,
+        "p90": 36,
+        "meanRP": 17.1
+      },
+      "2342": {
+        "mean": 18.4,
+        "p10": 12,
+        "p90": 26,
+        "meanRP": 22.1
+      },
+      "2370": {
+        "mean": 16.2,
+        "p10": 11,
+        "p90": 23,
+        "meanRP": 23.4
+      },
+      "2423": {
+        "mean": 40.7,
+        "p10": 36,
+        "p90": 45,
+        "meanRP": 12.2
+      },
+      "3461": {
+        "mean": 37.1,
+        "p10": 30,
+        "p90": 43,
+        "meanRP": 13.9
+      },
+      "4122": {
+        "mean": 15.4,
+        "p10": 9,
+        "p90": 23,
+        "meanRP": 24
+      },
+      "4176": {
+        "mean": 33,
+        "p10": 24,
+        "p90": 41,
+        "meanRP": 15.8
+      },
+      "4546": {
+        "mean": 13.5,
+        "p10": 8,
+        "p90": 20,
+        "meanRP": 25.5
+      },
+      "4575": {
+        "mean": 41.9,
+        "p10": 36,
+        "p90": 46,
+        "meanRP": 11.4
+      },
+      "5494": {
+        "mean": 33.7,
+        "p10": 25,
+        "p90": 42,
+        "meanRP": 15.5
+      },
+      "5735": {
+        "mean": 46.8,
+        "p10": 45,
+        "p90": 48,
+        "meanRP": 7.5
+      },
+      "5813": {
+        "mean": 3.3,
+        "p10": 2,
+        "p90": 5,
+        "meanRP": 36.3
+      },
+      "6153": {
+        "mean": 45,
+        "p10": 41,
+        "p90": 48,
+        "meanRP": 9
+      },
+      "6731": {
+        "mean": 12.6,
+        "p10": 8,
+        "p90": 18,
+        "meanRP": 25.7
+      },
+      "6933": {
+        "mean": 25,
+        "p10": 17,
+        "p90": 34,
+        "meanRP": 19.3
+      },
+      "7153": {
+        "mean": 43.6,
+        "p10": 38,
+        "p90": 48,
+        "meanRP": 10.4
+      },
+      "8085": {
+        "mean": 5,
+        "p10": 3,
+        "p90": 7,
+        "meanRP": 34
+      },
+      "8544": {
+        "mean": 19.1,
+        "p10": 12,
+        "p90": 28,
+        "meanRP": 22.2
+      },
+      "8567": {
+        "mean": 42.1,
+        "p10": 35,
+        "p90": 48,
+        "meanRP": 11.2
+      },
+      "8708": {
+        "mean": 37.7,
+        "p10": 32,
+        "p90": 44,
+        "meanRP": 13.9
+      },
+      "8724": {
+        "mean": 23.3,
+        "p10": 16,
+        "p90": 31,
+        "meanRP": 20.1
+      },
+      "9990": {
+        "mean": 39.5,
+        "p10": 32,
+        "p90": 47,
+        "meanRP": 12.9
+      },
+      "10063": {
+        "mean": 30.6,
+        "p10": 20,
+        "p90": 41,
+        "meanRP": 17.1
+      },
+      "10262": {
+        "mean": 26.6,
+        "p10": 20,
+        "p90": 35,
+        "meanRP": 18.8
+      },
+      "10910": {
+        "mean": 25.5,
+        "p10": 18,
+        "p90": 33,
+        "meanRP": 19.4
+      },
+      "11175": {
+        "mean": 39.2,
+        "p10": 35,
+        "p90": 43,
+        "meanRP": 13.5
+      }
+    },
+    "matchPredictions": {
+      "2026bc_qm1": {
+        "redProb": 0.872,
+        "tieProb": 0,
+        "blueProb": 0.128,
+        "redPredicted": 331.69,
+        "bluePredicted": 250.38,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.618
+          },
+          "blue": {
+            "energizedAchieved": 0.908,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm10": {
+        "redProb": 0.202,
+        "tieProb": 0,
+        "blueProb": 0.798,
+        "redPredicted": 133.51,
+        "bluePredicted": 156.94,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm11": {
+        "redProb": 0,
+        "tieProb": 0,
+        "blueProb": 1,
+        "redPredicted": 129.57999999999998,
+        "bluePredicted": 405.73,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.708
+          }
+        }
+      },
+      "2026bc_qm12": {
+        "redProb": 1,
+        "tieProb": 0,
+        "blueProb": 0,
+        "redPredicted": 426.83,
+        "bluePredicted": 124.89,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.892
+          },
+          "blue": {
+            "energizedAchieved": 0,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm13": {
+        "redProb": 0.91,
+        "tieProb": 0,
+        "blueProb": 0.08999999999999997,
+        "redPredicted": 300.02000000000004,
+        "bluePredicted": 226.34,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.104
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm14": {
+        "redProb": 0.19,
+        "tieProb": 0,
+        "blueProb": 0.81,
+        "redPredicted": 89.66999999999999,
+        "bluePredicted": 178.83999999999997,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0.432,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm15": {
+        "redProb": 0.704,
+        "tieProb": 0,
+        "blueProb": 0.296,
+        "redPredicted": 261.65,
+        "bluePredicted": 245.9,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.928,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm16": {
+        "redProb": 0,
+        "tieProb": 0,
+        "blueProb": 1,
+        "redPredicted": 143.06,
+        "bluePredicted": 448,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.082,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 1
+          }
+        }
+      },
+      "2026bc_qm17": {
+        "redProb": 1,
+        "tieProb": 0,
+        "blueProb": 0,
+        "redPredicted": 293.02,
+        "bluePredicted": 193.26999999999998,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0.388,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm18": {
+        "redProb": 0,
+        "tieProb": 0,
+        "blueProb": 1,
+        "redPredicted": 118.08,
+        "bluePredicted": 232.98000000000002,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm19": {
+        "redProb": 0.194,
+        "tieProb": 0,
+        "blueProb": 0.806,
+        "redPredicted": 146.51,
+        "bluePredicted": 220.23,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0.382,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm2": {
+        "redProb": 1,
+        "tieProb": 0,
+        "blueProb": 0,
+        "redPredicted": 387.99,
+        "bluePredicted": 325.04,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.478
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.194
+          }
+        }
+      },
+      "2026bc_qm20": {
+        "redProb": 0,
+        "tieProb": 0,
+        "blueProb": 1,
+        "redPredicted": 134.11,
+        "bluePredicted": 343.49,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.1,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.328
+          }
+        }
+      },
+      "2026bc_qm21": {
+        "redProb": 0.714,
+        "tieProb": 0,
+        "blueProb": 0.286,
+        "redPredicted": 338.13,
+        "bluePredicted": 296.63,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.088
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.118
+          }
+        }
+      },
+      "2026bc_qm22": {
+        "redProb": 1,
+        "tieProb": 0,
+        "blueProb": 0,
+        "redPredicted": 346.25,
+        "bluePredicted": 194.51999999999998,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.486
+          },
+          "blue": {
+            "energizedAchieved": 0.4,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm23": {
+        "redProb": 0,
+        "tieProb": 0,
+        "blueProb": 1,
+        "redPredicted": 140.70999999999998,
+        "bluePredicted": 256.96,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm24": {
+        "redProb": 0,
+        "tieProb": 0,
+        "blueProb": 1,
+        "redPredicted": 245.95,
+        "bluePredicted": 348.40999999999997,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.398
+          }
+        }
+      },
+      "2026bc_qm25": {
+        "redProb": 0,
+        "tieProb": 0,
+        "blueProb": 1,
+        "redPredicted": 134,
+        "bluePredicted": 478.07,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.108,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 1
+          }
+        }
+      },
+      "2026bc_qm26": {
+        "redProb": 0,
+        "tieProb": 0,
+        "blueProb": 1,
+        "redPredicted": 133.45,
+        "bluePredicted": 204.60000000000002,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.1,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0.728,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm27": {
+        "redProb": 0.808,
+        "tieProb": 0,
+        "blueProb": 0.192,
+        "redPredicted": 306.03000000000003,
+        "bluePredicted": 261.88,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0.912,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm28": {
+        "redProb": 0.10999999999999999,
+        "tieProb": 0,
+        "blueProb": 0.89,
+        "redPredicted": 162.88,
+        "bluePredicted": 285.37,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.296,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm29": {
+        "redProb": 0,
+        "tieProb": 0,
+        "blueProb": 1,
+        "redPredicted": 186.07000000000002,
+        "bluePredicted": 338.11,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.286,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.094
+          }
+        }
+      },
+      "2026bc_qm3": {
+        "redProb": 0.498,
+        "tieProb": 0,
+        "blueProb": 0.502,
+        "redPredicted": 315.55,
+        "bluePredicted": 335.62,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.074
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.514
+          }
+        }
+      },
+      "2026bc_qm30": {
+        "redProb": 0.09799999999999998,
+        "tieProb": 0,
+        "blueProb": 0.902,
+        "redPredicted": 157.35,
+        "bluePredicted": 214.37,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.088,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0.732,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm31": {
+        "redProb": 1,
+        "tieProb": 0,
+        "blueProb": 0,
+        "redPredicted": 403.82,
+        "bluePredicted": 253.14999999999998,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.774
+          },
+          "blue": {
+            "energizedAchieved": 0.886,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm32": {
+        "redProb": 1,
+        "tieProb": 0,
+        "blueProb": 0,
+        "redPredicted": 223.73,
+        "bluePredicted": 106.37,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.898,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm33": {
+        "redProb": 0.922,
+        "tieProb": 0,
+        "blueProb": 0.07800000000000001,
+        "redPredicted": 314.89,
+        "bluePredicted": 293.19,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.1
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm34": {
+        "redProb": 0.888,
+        "tieProb": 0,
+        "blueProb": 0.11199999999999999,
+        "redPredicted": 187.9,
+        "bluePredicted": 91.15,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.298,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm35": {
+        "redProb": 0,
+        "tieProb": 0,
+        "blueProb": 1,
+        "redPredicted": 259.49,
+        "bluePredicted": 350.13,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.51
+          }
+        }
+      },
+      "2026bc_qm36": {
+        "redProb": 0.08599999999999997,
+        "tieProb": 0,
+        "blueProb": 0.914,
+        "redPredicted": 315.37,
+        "bluePredicted": 440.02,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.188
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 1
+          }
+        }
+      },
+      "2026bc_qm37": {
+        "redProb": 0.48600000000000004,
+        "tieProb": 0.10600000000000001,
+        "blueProb": 0.40800000000000003,
+        "redPredicted": 109.35999999999999,
+        "bluePredicted": 114.78999999999999,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm38": {
+        "redProb": 0.10799999999999998,
+        "tieProb": 0,
+        "blueProb": 0.892,
+        "redPredicted": 121.27,
+        "bluePredicted": 163.03,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0.108,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm39": {
+        "redProb": 1,
+        "tieProb": 0,
+        "blueProb": 0,
+        "redPredicted": 313.38,
+        "bluePredicted": 122.08,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0.098,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm4": {
+        "redProb": 0.266,
+        "tieProb": 0,
+        "blueProb": 0.734,
+        "redPredicted": 97.68,
+        "bluePredicted": 131.82999999999998,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm40": {
+        "redProb": 0,
+        "tieProb": 0,
+        "blueProb": 1,
+        "redPredicted": 281.93,
+        "bluePredicted": 371.27,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.702
+          }
+        }
+      },
+      "2026bc_qm41": {
+        "redProb": 1,
+        "tieProb": 0,
+        "blueProb": 0,
+        "redPredicted": 473.86,
+        "bluePredicted": 221.69,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 1
+          },
+          "blue": {
+            "energizedAchieved": 0.686,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm42": {
+        "redProb": 0.77,
+        "tieProb": 0,
+        "blueProb": 0.22999999999999998,
+        "redPredicted": 335.48,
+        "bluePredicted": 273.01,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.208
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm43": {
+        "redProb": 0.916,
+        "tieProb": 0,
+        "blueProb": 0.08400000000000002,
+        "redPredicted": 184.92999999999998,
+        "bluePredicted": 125.46000000000001,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.426,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0.118,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm44": {
+        "redProb": 0.8,
+        "tieProb": 0,
+        "blueProb": 0.2,
+        "redPredicted": 173.48000000000002,
+        "bluePredicted": 142.85,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.778,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0.178,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm45": {
+        "redProb": 0,
+        "tieProb": 0,
+        "blueProb": 1,
+        "redPredicted": 133.14,
+        "bluePredicted": 237.62,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.106,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0.916,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm46": {
+        "redProb": 1,
+        "tieProb": 0,
+        "blueProb": 0,
+        "redPredicted": 264.40999999999997,
+        "bluePredicted": 123.64999999999999,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm47": {
+        "redProb": 0.288,
+        "tieProb": 0,
+        "blueProb": 0.712,
+        "redPredicted": 280.05,
+        "bluePredicted": 334.02,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.096
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.416
+          }
+        }
+      },
+      "2026bc_qm48": {
+        "redProb": 0.09199999999999997,
+        "tieProb": 0,
+        "blueProb": 0.908,
+        "redPredicted": 266.96,
+        "bluePredicted": 278.64,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.904,
+            "superchargedAchieved": 0.098
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm49": {
+        "redProb": 1,
+        "tieProb": 0,
+        "blueProb": 0,
+        "redPredicted": 329.11,
+        "bluePredicted": 127.81,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.296
+          },
+          "blue": {
+            "energizedAchieved": 0,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm5": {
+        "redProb": 0,
+        "tieProb": 0,
+        "blueProb": 1,
+        "redPredicted": 162.39999999999998,
+        "bluePredicted": 320.06,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.214,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm50": {
+        "redProb": 0,
+        "tieProb": 0,
+        "blueProb": 1,
+        "redPredicted": 191.47,
+        "bluePredicted": 356.72,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.476,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.378
+          }
+        }
+      },
+      "2026bc_qm51": {
+        "redProb": 0.872,
+        "tieProb": 0,
+        "blueProb": 0.128,
+        "redPredicted": 206.16,
+        "bluePredicted": 147.51999999999998,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.67,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0.204,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm52": {
+        "redProb": 0.81,
+        "tieProb": 0,
+        "blueProb": 0.19,
+        "redPredicted": 255.97,
+        "bluePredicted": 237.68,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm53": {
+        "redProb": 1,
+        "tieProb": 0,
+        "blueProb": 0,
+        "redPredicted": 370.56,
+        "bluePredicted": 186.95999999999998,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.916
+          },
+          "blue": {
+            "energizedAchieved": 0.636,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm54": {
+        "redProb": 0.584,
+        "tieProb": 0,
+        "blueProb": 0.416,
+        "redPredicted": 156.76,
+        "bluePredicted": 137.04,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.198,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0.092,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm55": {
+        "redProb": 0,
+        "tieProb": 0,
+        "blueProb": 1,
+        "redPredicted": 130.24,
+        "bluePredicted": 380.77,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.886
+          }
+        }
+      },
+      "2026bc_qm56": {
+        "redProb": 0,
+        "tieProb": 0,
+        "blueProb": 1,
+        "redPredicted": 268.39,
+        "bluePredicted": 366.09000000000003,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.684,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.688
+          }
+        }
+      },
+      "2026bc_qm57": {
+        "redProb": 0.5,
+        "tieProb": 0,
+        "blueProb": 0.5,
+        "redPredicted": 186.59,
+        "bluePredicted": 174.89,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.598,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0.198,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm58": {
+        "redProb": 0.728,
+        "tieProb": 0,
+        "blueProb": 0.272,
+        "redPredicted": 296.47,
+        "bluePredicted": 233.22,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.898,
+            "superchargedAchieved": 0.092
+          },
+          "blue": {
+            "energizedAchieved": 0.888,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm59": {
+        "redProb": 0.894,
+        "tieProb": 0,
+        "blueProb": 0.10599999999999998,
+        "redPredicted": 290.98,
+        "bluePredicted": 220.58,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.906,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0.886,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm6": {
+        "redProb": 1,
+        "tieProb": 0,
+        "blueProb": 0,
+        "redPredicted": 262.46999999999997,
+        "bluePredicted": 106.19,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm60": {
+        "redProb": 0.238,
+        "tieProb": 0,
+        "blueProb": 0.762,
+        "redPredicted": 186.38,
+        "bluePredicted": 225.54999999999998,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.31,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0.896,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm61": {
+        "redProb": 0,
+        "tieProb": 0,
+        "blueProb": 1,
+        "redPredicted": 102.84,
+        "bluePredicted": 413.1,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.738
+          }
+        }
+      },
+      "2026bc_qm62": {
+        "redProb": 1,
+        "tieProb": 0,
+        "blueProb": 0,
+        "redPredicted": 432.03,
+        "bluePredicted": 177.9,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 1
+          },
+          "blue": {
+            "energizedAchieved": 0.206,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm63": {
+        "redProb": 0,
+        "tieProb": 0,
+        "blueProb": 1,
+        "redPredicted": 119.07,
+        "bluePredicted": 271.03999999999996,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm64": {
+        "redProb": 1,
+        "tieProb": 0,
+        "blueProb": 0,
+        "redPredicted": 357.24,
+        "bluePredicted": 161.37,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.264
+          },
+          "blue": {
+            "energizedAchieved": 0.088,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm65": {
+        "redProb": 0,
+        "tieProb": 0,
+        "blueProb": 1,
+        "redPredicted": 99.12,
+        "bluePredicted": 222.12,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0.81,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm66": {
+        "redProb": 1,
+        "tieProb": 0,
+        "blueProb": 0,
+        "redPredicted": 292.74,
+        "bluePredicted": 202.17,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0.592,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm67": {
+        "redProb": 0,
+        "tieProb": 0,
+        "blueProb": 1,
+        "redPredicted": 250.70999999999998,
+        "bluePredicted": 526.36,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.81,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 1
+          }
+        }
+      },
+      "2026bc_qm68": {
+        "redProb": 0.396,
+        "tieProb": 0,
+        "blueProb": 0.604,
+        "redPredicted": 208.38000000000002,
+        "bluePredicted": 239.27999999999997,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.564,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0.904,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm69": {
+        "redProb": 0.902,
+        "tieProb": 0,
+        "blueProb": 0.09799999999999998,
+        "redPredicted": 205.06,
+        "bluePredicted": 131.01000000000002,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.688,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm7": {
+        "redProb": 0.126,
+        "tieProb": 0,
+        "blueProb": 0.874,
+        "redPredicted": 197.28000000000003,
+        "bluePredicted": 265.5,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.822,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm70": {
+        "redProb": 1,
+        "tieProb": 0,
+        "blueProb": 0,
+        "redPredicted": 277.34000000000003,
+        "bluePredicted": 166.47,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0.3,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm71": {
+        "redProb": 1,
+        "tieProb": 0,
+        "blueProb": 0,
+        "redPredicted": 301.4,
+        "bluePredicted": 210.57999999999998,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.116
+          },
+          "blue": {
+            "energizedAchieved": 0.678,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm72": {
+        "redProb": 0.676,
+        "tieProb": 0,
+        "blueProb": 0.324,
+        "redPredicted": 254.06,
+        "bluePredicted": 262.45,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.926,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm8": {
+        "redProb": 1,
+        "tieProb": 0,
+        "blueProb": 0,
+        "redPredicted": 233.05,
+        "bluePredicted": 126.52,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 0.818,
+            "superchargedAchieved": 0
+          },
+          "blue": {
+            "energizedAchieved": 0,
+            "superchargedAchieved": 0
+          }
+        }
+      },
+      "2026bc_qm9": {
+        "redProb": 0.904,
+        "tieProb": 0,
+        "blueProb": 0.09599999999999997,
+        "redPredicted": 330.65,
+        "bluePredicted": 247.64000000000001,
+        "rpProbs": {
+          "red": {
+            "energizedAchieved": 1,
+            "superchargedAchieved": 0.27
+          },
+          "blue": {
+            "energizedAchieved": 0.806,
+            "superchargedAchieved": 0
+          }
+        }
+      }
+    }
+  }
 }
