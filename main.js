@@ -3690,14 +3690,15 @@ async function renderAtAGlance() {
             case 'composite': va = -a.composite; vb = -b.composite; break;
             // Swap a/b so glanceSortOrder=1 means ascending (smallest team number first)
             case 'teamNumber': va = b.team.teamNumber; vb = a.team.teamNumber; break;
-            default: va = a.rp.rp; vb = b.rp.rp; break;
+            default: va = a.rp.played > 0 ? a.rp.rp / a.rp.played : 0; vb = b.rp.played > 0 ? b.rp.rp / b.rp.played : 0; break;
         }
         return (vb - va) * glanceSortOrder || avgScore(b.rp) - avgScore(a.rp) || (b.epaVal - a.epaVal);
     });
 
     // Compute RP-based rank separately so it stays stable regardless of current sort
+    const avgRP = rp => rp.played > 0 ? rp.rp / rp.played : 0;
     const rpRank = Object.fromEntries(
-        [...rows].sort((a, b) => b.rp.rp - a.rp.rp || avgScore(b.rp) - avgScore(a.rp) || b.epaVal - a.epaVal)
+        [...rows].sort((a, b) => avgRP(b.rp) - avgRP(a.rp) || avgScore(b.rp) - avgScore(a.rp) || b.epaVal - a.epaVal)
             .map((r, i) => [r.team.teamNumber, i + 1])
     );
     const TIER = TIER_STYLE;
@@ -6848,7 +6849,9 @@ async function renderPickList() {
         };
         unranked.sort((a, b) => {
             if (pickListSortCol === 'rp') {
-                const rpDiff = b.rp.rp - a.rp.rp;
+                const avgRpA = a.rp.matches > 0 ? a.rp.rp / a.rp.matches : 0;
+                const avgRpB = b.rp.matches > 0 ? b.rp.rp / b.rp.matches : 0;
+                const rpDiff = avgRpB - avgRpA;
                 if (rpDiff !== 0) return rpDiff * pickListSortDir;
                 const avgA = a.rp.matches > 0 ? a.rp.totalScore / a.rp.matches : 0;
                 const avgB = b.rp.matches > 0 ? b.rp.totalScore / b.rp.matches : 0;
