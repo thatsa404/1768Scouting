@@ -263,10 +263,13 @@ window.displaySchedule = async function () {
     const teamCell = (team, cls) =>
         `<td class="${cls}" data-team="${team}" onclick="highlightTeam('${team}')" style="cursor:pointer;"><strong>${team}</strong></td>`;
 
+    const nowTs = Math.floor(Date.now() / 1000);
+
     matches.forEach(m => {
         const redWon  = m.redScore > -1 && m.redScore > m.blueScore;
         const blueWon = m.redScore > -1 && m.blueScore > m.redScore;
         const hasVideo = m.videos && m.videos.length > 0;
+        const matchPassed = m.redScore <= -1 && m.predictedTime && m.predictedTime < nowTs;
         const videoIcon = hasVideo
             ? `<svg style="width:12px;height:12px;vertical-align:middle;margin-left:4px;color:#f59e0b;flex-shrink:0;" viewBox="0 0 20 20" fill="currentColor"><circle cx="10" cy="10" r="10"/><polygon points="8,6 15,10 8,14" fill="#080d16"/></svg>`
             : '';
@@ -287,7 +290,10 @@ window.displaySchedule = async function () {
                        <div style="color:#334155;font-size:0.65em;line-height:1.4;white-space:nowrap;">${hasVideo ? videoIcon : '—'}</div>
                        <div style="color:${blueWon ? '#4ade80' : '#94a3b8'};font-weight:${blueWon ? '800' : 'normal'};white-space:nowrap;">${m.blueScore}</div>
                    </td>`
-                : `<td rowspan="2" style="color:#64748b;font-style:italic;border-left:2px solid #334155;vertical-align:middle;text-align:center;white-space:nowrap;min-width:2.8rem;">—</td>`;
+                : matchPassed
+                    ? `<td rowspan="2" onclick="viewMatchDetail('${m.key}')"
+                           style="cursor:pointer;border-left:2px solid #334155;vertical-align:middle;text-align:center;white-space:nowrap;min-width:2.8rem;">⏩</td>`
+                    : `<td rowspan="2" data-unscored-key="${m.key}" data-unscored-time="${m.predictedTime}" style="color:#64748b;font-style:italic;border-left:2px solid #334155;vertical-align:middle;text-align:center;white-space:nowrap;min-width:2.8rem;">—</td>`;
 
             const mobileCountdown = m.redScore <= -1 && m.predictedTime
                 ? `<div data-predicted-time="${m.predictedTime}" style="font-size:0.65em;color:#64748b;margin-top:2px;"></div>`
@@ -315,7 +321,9 @@ window.displaySchedule = async function () {
                        <span style="color:${blueWon ? '#4ade80' : '#94a3b8'};font-weight:${blueWon ? 'bold' : 'normal'}">${m.blueScore}</span>
                        ${videoIcon}
                    </td>`
-                : `<td style="color:#64748b;font-style:italic;border-left:2px solid #334155;">Upcoming</td>`;
+                : matchPassed
+                    ? `<td onclick="viewMatchDetail('${m.key}')" style="cursor:pointer;border-left:2px solid #334155;text-align:center;color:#64748b;">⏩</td>`
+                    : `<td data-unscored-key="${m.key}" data-unscored-time="${m.predictedTime}" style="color:#64748b;font-style:italic;border-left:2px solid #334155;">Upcoming</td>`;
             const desktopCountdown = m.redScore <= -1 && m.predictedTime
                 ? `<div data-predicted-time="${m.predictedTime}" style="font-size:0.65em;color:#64748b;margin-top:2px;"></div>`
                 : '';
@@ -356,6 +364,18 @@ function updateScheduleCountdowns() {
             const m = Math.floor(remaining / 60);
             const s = String(remaining % 60).padStart(2, '0');
             el.textContent = m > 0 ? `${m}m ${s}s` : `${s}s`;
+        }
+    });
+    // Flip "Upcoming / —" cells to ⏩ once their predicted time passes
+    document.querySelectorAll('[data-unscored-key]').forEach(td => {
+        const t = parseInt(td.dataset.unscoredTime, 10);
+        if (t && t < now) {
+            const key = td.dataset.unscoredKey;
+            td.removeAttribute('data-unscored-key');
+            td.removeAttribute('data-unscored-time');
+            td.style.cssText += ';cursor:pointer;text-align:center;color:#64748b;font-style:normal;';
+            td.textContent = '⏩';
+            td.onclick = () => window.viewMatchDetail(key);
         }
     });
 }
@@ -815,7 +835,8 @@ window.viewMatchDetail = async function (matchKey) {
         } catch {}
         const stream = findStreamForMatch(match, webcasts);
         if (stream) {
-            const offset = Math.max(0, match.actualTime - stream.startTimestamp - 20);
+            const matchTs = match.actualTime ?? match.predictedTime;
+            const offset = Math.max(0, matchTs - stream.startTimestamp - 20);
             const thumbId = 'stream-seek-thumb';
             videoSection.innerHTML = `
                 <div style="color:#64748b;font-size:0.78em;font-style:italic;margin-bottom:6px;">No match video yet — live stream seeked to approx. match time</div>
@@ -1077,10 +1098,13 @@ window.loadYTEmbedAtTime = function (key, thumbId, startSecs) {
     </div>`;
 };
 
-// Returns the webcast record (with startTimestamp) whose date matches the match's actual_time UTC date.
+// Returns the webcast record (with startTimestamp) whose date matches the match's play time.
+// Uses actualTime when available; falls back to predictedTime if the predicted time has already passed.
 function findStreamForMatch(match, webcasts) {
-    if (!match.actualTime || !webcasts.length) return null;
-    const matchDate = new Date(match.actualTime * 1000).toISOString().slice(0, 10);
+    const now = Math.floor(Date.now() / 1000);
+    const ts = match.actualTime ?? (match.predictedTime < now ? match.predictedTime : null);
+    if (!ts || !webcasts.length) return null;
+    const matchDate = new Date(ts * 1000).toISOString().slice(0, 10);
     return webcasts.find(w => w.date === matchDate && w.type === 'youtube' && w.startTimestamp) ?? null;
 }
 
@@ -2956,6 +2980,7 @@ window.syncTBAMatches = async function () {
         setSyncTimestamp('tbaMatches');
         watchListDirty = true;
         statusDiv.innerText = `✅ TBA Matches synced (${records.length} qual matches).`;
+        displaySchedule();
     } catch (err) {
         console.error(err);
         statusDiv.innerText = `❌ TBA Matches Sync Failed: ${err.message}`;
