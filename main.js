@@ -144,16 +144,30 @@ window.closeEventSelector = function () {
     if (overlay) overlay.style.display = 'none';
 };
 
-window.selectPresetEvent = function (key) {
+window.selectPresetEvent = async function (key) {
     const input = document.getElementById('eventKeyInput');
     if (input) input.value = key;
     localStorage.setItem('lastEventKey', key);
     updateAppEventKey(key);
     updateOBEStatus(key);
     renderScoutingSection();
-    clearTimeout(_archiveCheckTimer);
-    _archiveCheckTimer = setTimeout(() => checkEventArchive(key), 100);
     window.closeEventSelector();
+
+    // Auto-load archive if one exists for this event
+    const url = `${import.meta.env.BASE_URL}scouting/${key}_archive.json`;
+    const hint = document.getElementById('archiveHint');
+    if (hint) hint.innerHTML = `<span style="color:#64748b;font-size:0.82em;">Checking for archive…</span>`;
+    try {
+        const resp = await fetch(url, { method: 'HEAD' });
+        const ct = resp.headers.get('content-type') || '';
+        if (resp.ok && ct.includes('json')) {
+            await window.loadEventArchive(key);
+        } else {
+            if (hint) hint.innerHTML = `<span style="color:#475569;font-size:0.8em;">No archive available</span>`;
+        }
+    } catch {
+        if (hint) hint.innerHTML = `<span style="color:#475569;font-size:0.8em;">No archive available</span>`;
+    }
 };
 
 window.selectCustomEvent = function () {
