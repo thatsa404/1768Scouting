@@ -39,13 +39,16 @@ function fireNotif(title, body, tag) {
 }
 
 function updateNotifBtn() {
-    const btn = document.getElementById('notifBtn');
+    const btn   = document.getElementById('notifBtn');
+    const label = document.getElementById('notifBtnLabel');
     if (!btn) return;
     const enabled = localStorage.getItem('notifEnabled') === 'true';
+    const blocked = Notification.permission === 'denied';
     btn.style.opacity = enabled ? '1' : '0.35';
-    btn.title = Notification.permission === 'denied'
+    btn.title = blocked
         ? 'Notifications blocked — allow in browser settings'
         : enabled ? 'Notifications on (click to disable)' : 'Notifications off (click to enable)';
+    if (label) label.textContent = blocked ? 'Blocked' : enabled ? 'On' : 'Off';
 }
 
 function initNotifications() {
@@ -87,6 +90,80 @@ function updateAppEventKey(eventKey) {
         document.title = 'Nashoba Robotics — Event Hub';
     }
 }
+
+// ── EVENT SELECTOR ─────────────────────────────────────────────────────────────
+
+function showEventSelector() {
+    const overlay = document.getElementById('event-selector-overlay');
+    if (!overlay) return;
+
+    // Build preset cards grouped by year, newest first
+    const byYear = {};
+    for (const [key, src] of Object.entries(SCOUTING_SOURCES)) {
+        const year = key.slice(0, 4);
+        if (!byYear[year]) byYear[year] = [];
+        byYear[year].push({ key, src });
+    }
+    const years = Object.keys(byYear).sort((a, b) => b - a);
+
+    const presetsEl = document.getElementById('event-selector-presets');
+    if (presetsEl) {
+        presetsEl.innerHTML = years.map(year => {
+            const cards = byYear[year].map(({ key, src }) => {
+                const gameConfig = getGameConfig(key);
+                const sublabel = [src.label, gameConfig ? `${gameConfig.name} ${year}` : null]
+                    .filter(Boolean).join(' · ');
+                return `<button class="event-preset-card" onclick="window.selectPresetEvent('${key}')">
+                    <span class="preset-key">${key}</span>
+                    ${sublabel ? `<span class="preset-sublabel">${sublabel}</span>` : ''}
+                </button>`;
+            }).join('');
+            return `<div>
+                <div class="event-selector-year-label">${year}</div>
+                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:8px;">${cards}</div>
+            </div>`;
+        }).join('');
+    }
+
+    // Show "Continue with [key]" if a key is already saved
+    const savedKey = localStorage.getItem('lastEventKey');
+    const continueDiv = document.getElementById('event-selector-continue');
+    const continueBtn = document.getElementById('event-selector-continue-btn');
+    if (savedKey && continueDiv && continueBtn) {
+        continueBtn.textContent = `Continue with ${savedKey}`;
+        continueDiv.style.display = 'block';
+    } else if (continueDiv) {
+        continueDiv.style.display = 'none';
+    }
+
+    overlay.style.display = 'flex';
+}
+
+window.closeEventSelector = function () {
+    const overlay = document.getElementById('event-selector-overlay');
+    if (overlay) overlay.style.display = 'none';
+};
+
+window.selectPresetEvent = function (key) {
+    const input = document.getElementById('eventKeyInput');
+    if (input) input.value = key;
+    localStorage.setItem('lastEventKey', key);
+    updateAppEventKey(key);
+    updateOBEStatus(key);
+    renderScoutingSection();
+    clearTimeout(_archiveCheckTimer);
+    _archiveCheckTimer = setTimeout(() => checkEventArchive(key), 100);
+    window.closeEventSelector();
+};
+
+window.selectCustomEvent = function () {
+    const input = document.getElementById('event-selector-custom-input');
+    const key = input?.value.trim().toLowerCase();
+    if (!key) return;
+    window.selectPresetEvent(key);
+};
+
+window.openEventSelector = function () { showEventSelector(); };
 
 // 3. UTILITY FUNCTIONS
 const sleep = (ms) => new Promise(res => setTimeout(res, ms));
@@ -411,16 +488,15 @@ function updateBannerTick() {
     const now = Math.floor(Date.now() / 1000);
     const remaining = _bannerMatchTime - now;
 
-    if (remaining < -120) {
-        // Well past predicted time with no score — refresh to find next match
+    if (remaining < 0) {
+        // Predicted time passed — clear and advance to the next future match
+        _bannerMatchTime = null;
         updateHomeBanner();
         return;
     }
 
     let countdown;
-    if (remaining <= 0) {
-        countdown = 'Starting now';
-    } else if (remaining >= 3600) {
+    if (remaining >= 3600) {
         const h = Math.floor(remaining / 3600);
         const m = Math.floor((remaining % 3600) / 60);
         countdown = `${h}h ${m}m`;
@@ -439,10 +515,12 @@ async function updateHomeBanner() {
     const allianceEl = document.getElementById('match-countdown-alliance');
     if (!banner) return;
 
+    const now = Math.floor(Date.now() / 1000);
     const matches = await db.matches.orderBy('matchNumber').toArray();
     const next = matches.find(m =>
         m.redScore <= -1 &&
         m.predictedTime &&
+        m.predictedTime > now &&
         (m.red?.includes('1768') || m.blue?.includes('1768'))
     );
 
@@ -5376,12 +5454,21 @@ function initUIMode() {
 window.setColorMode = function (mode) {
     localStorage.setItem('colorMode', mode);
     document.body.classList.toggle('light-mode', mode === 'light');
+    document.getElementById('darkModeBtn')?.classList.toggle('active', mode === 'dark');
+    document.getElementById('lightModeBtn')?.classList.toggle('active', mode === 'light');
 };
 
-window.toggleColorMode = function () {
-    const current = localStorage.getItem('colorMode') || 'dark';
-    window.setColorMode(current === 'dark' ? 'light' : 'dark');
+window.toggleConfigPanel = function () {
+    document.getElementById('config-panel')?.classList.toggle('open');
 };
+
+document.addEventListener('click', e => {
+    const panel = document.getElementById('config-panel');
+    const btn   = document.getElementById('configBtn');
+    if (panel?.classList.contains('open') && !panel.contains(e.target) && !btn?.contains(e.target)) {
+        panel.classList.remove('open');
+    }
+});
 
 window.rerollQuip = function () {
     const container = document.getElementById('detailTeamQuip');
@@ -7333,8 +7420,80 @@ async function renderDevTab() {
             </div>
         </details>`;
 
-    el.innerHTML = `<div style="padding:12px;">${quipTierHtml}${wlControlsHtml}${calibrationHtml}${streamSeekTestHtml}${fieldExplorerHtml}${timeMachineHtml}</div>`;
+    // ── Notification Tester ──────────────────────────────────────────────────
+    const notifPerm = ('Notification' in window) ? Notification.permission : 'unsupported';
+    const permColor = { granted: '#4ade80', denied: '#f87171', default: '#fbbf24', unsupported: '#64748b' }[notifPerm] ?? '#64748b';
+    const notifTesterHtml = `
+        <details style="margin-bottom:16px;border:1px solid #1e293b;border-radius:8px;overflow:hidden;">
+            <summary style="cursor:pointer;color:#e2e8f0;font-weight:700;padding:10px 14px;background:#0f172a;font-size:1em;letter-spacing:0.02em;">
+                Notification Tester
+            </summary>
+            <div style="padding:14px;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+                    <span style="font-size:0.82em;color:#64748b;">Permission:</span>
+                    <span style="font-size:0.82em;font-weight:700;color:${permColor};">${notifPerm}</span>
+                    ${notifPerm === 'default' ? `<button onclick="Notification.requestPermission().then(()=>renderDevTab())"
+                        style="margin-left:6px;padding:3px 10px;background:#1e3a5f;color:#93c5fd;border:1px solid #2563eb;border-radius:5px;cursor:pointer;font-size:0.8em;">
+                        Request
+                    </button>` : ''}
+                </div>
+                <p style="color:#94a3b8;font-size:0.82em;margin:0 0 12px;line-height:1.5;">
+                    Fires a notification directly, bypassing the enabled toggle. Use this to verify permission and OS delivery.
+                </p>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <button onclick="devTestNotif('warn')"
+                        style="padding:5px 14px;background:#1e3a5f;color:#93c5fd;border:1px solid #2563eb;border-radius:5px;cursor:pointer;font-size:0.85em;font-weight:600;">
+                        Test: Match Warning
+                    </button>
+                    <button onclick="devTestNotif('score')"
+                        style="padding:5px 14px;background:#1e3a5f;color:#93c5fd;border:1px solid #2563eb;border-radius:5px;cursor:pointer;font-size:0.85em;font-weight:600;">
+                        Test: Score Posted
+                    </button>
+                    <button onclick="devTestNotif('title')"
+                        style="padding:5px 14px;background:#334155;color:#f8fafc;border:1px solid #475569;border-radius:5px;cursor:pointer;font-size:0.85em;font-weight:600;">
+                        Test: Tab Title
+                    </button>
+                </div>
+                <div id="dev-notif-status" style="margin-top:10px;font-size:0.82em;color:#64748b;"></div>
+            </div>
+        </details>`;
+
+    el.innerHTML = `<div style="padding:12px;">${quipTierHtml}${wlControlsHtml}${calibrationHtml}${notifTesterHtml}${streamSeekTestHtml}${fieldExplorerHtml}${timeMachineHtml}</div>`;
 }
+
+window.devTestNotif = function (type) {
+    const statusEl = document.getElementById('dev-notif-status');
+    const perm = ('Notification' in window) ? Notification.permission : 'unsupported';
+
+    if (perm === 'unsupported') {
+        if (statusEl) statusEl.textContent = 'Notifications are not supported in this browser.';
+        return;
+    }
+    if (perm !== 'granted') {
+        if (statusEl) statusEl.textContent = 'Permission not granted — click Request above first.';
+        return;
+    }
+
+    if (type === 'title') {
+        document.title = '🔔 Test notification — 1768 Scouting';
+        if (statusEl) statusEl.textContent = 'Tab title updated. Switch to another tab and back to see it reset.';
+        return;
+    }
+
+    let title, body, tag;
+    if (type === 'warn') {
+        title = 'QM 12 in ~3 min';
+        body  = '254, 1114, 1678 vs 2056, 118, 148';
+        tag   = 'dev-warn-test';
+    } else {
+        title = 'QM 12 scored — Red wins';
+        body  = '72–41 · Red: 254, 1114, 1678 · Blue: 2056, 118, 148';
+        tag   = 'dev-score-test';
+    }
+
+    new Notification(title, { body, tag, icon: '/favicon.ico' });
+    if (statusEl) statusEl.textContent = `Fired: "${title}"`;
+};
 
 window.devApplyStreamSeekTest = async function () {
     const statusEl = document.getElementById('dev-stream-status');
@@ -9373,6 +9532,8 @@ const bootApp = async () => {
     if (savedKey) {
         document.getElementById('eventKeyInput').value = savedKey;
         updateAppEventKey(savedKey);
+    } else {
+        showEventSelector();
     }
 
     renderScoutingSection();

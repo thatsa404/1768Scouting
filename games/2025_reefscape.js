@@ -35,25 +35,30 @@ export default {
     //      local path /scouting/xxx.json = archived (no auto-sync)
     eventSources: {
         '2025nhsal': {
+            label: '2025 Week 1 - UNH',
             url: 'https://docs.google.com/spreadsheets/d/1AswB6GoLpaAQtKl-YABLQOsq27XadUBV0jjeY8dZGIQ/export?format=csv&gid=0',
         },
-        '2025hop': {
-            url:             'https://docs.google.com/spreadsheets/d/1kve4VKu8z1pilr3IbqI6KL2oCCdQ01Gd-QzZwZP_Yd0/export?format=csv&gid=0',
-            pitUrl:          'https://docs.google.com/spreadsheets/d/1kve4VKu8z1pilr3IbqI6KL2oCCdQ01Gd-QzZwZP_Yd0/export?format=csv&gid=422722453',
-            columnOverrides: _altColumns,
-        },
         '2025rikin': {
+            label:  '2025 Week 3 - URI',
             url:    'https://docs.google.com/spreadsheets/d/1uMo83-BPj2nqj4E5kAj1dzW6jOwneG62oqfu2K7vISc/export?format=csv&gid=0',
             pitUrl: 'https://docs.google.com/spreadsheets/d/1uMo83-BPj2nqj4E5kAj1dzW6jOwneG62oqfu2K7vISc/export?format=csv&gid=1348182571',
         },
         '2025mawor': {
+            label:           '2025 Week 4 - WPI',
             url:             'https://docs.google.com/spreadsheets/d/1vMU2xYcMb3EFsf_uibDrnOt3RBJkr8RewFEXz4cCwDw/export?format=csv&gid=0',
             pitUrl:          'https://docs.google.com/spreadsheets/d/1vMU2xYcMb3EFsf_uibDrnOt3RBJkr8RewFEXz4cCwDw/export?format=csv&gid=1348182571',
             columnOverrides: _altColumns,
         },
         '2025necmp2': {
+            label:           '2025 NE Championship - Sosik',
             url:             'https://docs.google.com/spreadsheets/d/134YRYsZ4pI_Va-OYNBzMthkA3JczH7lsEHXIEr1O7ms/export?format=csv&gid=0',
             pitUrl:          'https://docs.google.com/spreadsheets/d/134YRYsZ4pI_Va-OYNBzMthkA3JczH7lsEHXIEr1O7ms/export?format=csv&gid=1348182571',
+            columnOverrides: _altColumns,
+        },
+        '2025hop': {
+            label:           '2025 Champs - Hopper Division',
+            url:             'https://docs.google.com/spreadsheets/d/1kve4VKu8z1pilr3IbqI6KL2oCCdQ01Gd-QzZwZP_Yd0/export?format=csv&gid=0',
+            pitUrl:          'https://docs.google.com/spreadsheets/d/1kve4VKu8z1pilr3IbqI6KL2oCCdQ01Gd-QzZwZP_Yd0/export?format=csv&gid=422722453',
             columnOverrides: _altColumns,
         },
     },

@@ -15,10 +15,12 @@ export default {
     // ── Event sources ─────────────────────────────────────────────────────────
     eventSources: {
         '2026necmp1': {
+            label:  '2026 NE Championship - Burns',
             url:    'https://docs.google.com/spreadsheets/d/1ojsk9s9Tjc6-ZWRj-7yJsEaUwLkIFcg9wdnAA02aXUQ/edit?gid=0#gid=0',
             pitUrl: 'https://docs.google.com/spreadsheets/d/14ZDaH9QYnHnpaf0fCz_WMjRwNNyD7ud41nXrrQe2ncU/edit?gid=2048789223#gid=2048789223',
         },
         '2026bc': {
+            label:  'Battle Cry @ WPI - Week 1',
             pitUrl: 'https://docs.google.com/spreadsheets/d/1JC95m3gYA65d7I_UuTGUxgQOvlCBv_sN18CRjH7iuas/edit?gid=2048789223#gid=2048789223',
         },
     },
