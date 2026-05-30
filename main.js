@@ -1058,7 +1058,6 @@ window.highlightTeam = function (teamNumber) {
     if (window.currentFocusedTeam === teamNumber.toString()) {
         window.currentFocusedTeam = null;
         window.refreshPrepHighlight(); // Keep these in sync
-        watchListDirty = true;
         if (document.getElementById('schedule-sub-watchlist')?.style.display !== 'none') renderWatchList();
         return;
     }
@@ -1078,7 +1077,6 @@ window.highlightTeam = function (teamNumber) {
     // 4. Update the Prep cards if they are currently visible
     window.refreshPrepHighlight();
     applyScheduleFilter();
-    watchListDirty = true;
     if (document.getElementById('schedule-sub-watchlist')?.style.display !== 'none') renderWatchList();
 };
 
@@ -2199,6 +2197,7 @@ window.clearEvent = async function () {
         // Clear module-level caches so stale data doesn't persist across renders
         wlDetailCache = null;
         wlPreEventCache = null;
+        wlComputedAsOf = null;
         wlCalibrationBeta = 0.982;
         watchListDirty = true;
 
@@ -3797,6 +3796,7 @@ let wlOtherCollapsed = false;
 let wlStandingsCollapsed = false;
 let wlDetailCache = null;
 let wlPreEventCache = null;
+let wlComputedAsOf = null; // label shown in banner, e.g. "Q12" or null for pre-event
 // Linear calibration factor: p_cal = 0.5 + wlCalibrationBeta*(p - 0.5).
 // 1.0 = no correction; <1.0 = shrink toward 50% (fixes overconfidence).
 // Set by runBacktest → applyWLCalibration(), resets to 1.0 on page load.
@@ -3809,7 +3809,7 @@ window.switchScheduleTab = function (tab) {
     document.querySelectorAll('#scheduleTabs .detail-tab-btn').forEach((btn, i) => {
         btn.classList.toggle('active', ['matches', 'watchlist'][i] === tab);
     });
-    if (tab === 'watchlist' && watchListDirty) renderWatchList();
+    if (tab === 'watchlist' && watchListDirty) showWatchListStale();
 };
 
 // ── WATCH LIST ENGINE ────────────────────────────────────────────────────────
@@ -4235,7 +4235,26 @@ function buildWLControlsHTML(eventKey, effectiveThresholds, totalMatchCount, tba
 
 // ── WATCH LIST RENDERER ──────────────────────────────────────────────────────
 
-async function renderWatchList() {
+function showWatchListStale() {
+    const updateBtn = document.getElementById('wl-update-btn');
+    if (updateBtn) {
+        // Watch list already rendered — just surface the Update button in the banner.
+        updateBtn.style.display = '';
+        return;
+    }
+    // No rendered content yet — show a compute placeholder.
+    const container = document.getElementById('schedule-sub-watchlist');
+    if (!container) return;
+    container.innerHTML = `
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:48px 20px;gap:14px;">
+            <button onclick="renderWatchList()"
+                style="background:#1d4ed8;color:#f8fafc;border:none;border-radius:8px;padding:10px 28px;font-size:1em;font-weight:600;cursor:pointer;letter-spacing:0.02em;">
+                Compute Watch List
+            </button>
+        </div>`;
+}
+
+window.renderWatchList = async function renderWatchList() {
     watchListDirty = false;
     const container = document.getElementById('schedule-sub-watchlist');
     if (!container) return;
@@ -4287,6 +4306,10 @@ async function renderWatchList() {
     const unplayed = allMatches.filter(m =>
         (m.redScore ?? -1) < 0 || (cutoffN != null && m.matchNumber > cutoffN)
     );
+
+    const lastPlayedNum = playedMatches.length > 0
+        ? Math.max(...playedMatches.map(m => m.matchNumber)) : null;
+    wlComputedAsOf = cutoffN != null ? `Q${cutoffN}` : lastPlayedNum != null ? `Q${lastPlayedNum}` : null;
 
     const focusedTN  = String(window.currentFocusedTeam || OWN_TEAM);
     const { relResiduals, diffResiduals } = wlCollectResiduals(playedMatches, tbaMap, teamsMap);
@@ -4461,10 +4484,11 @@ async function renderWatchList() {
 
     container.innerHTML = `
         ${debugBanner}
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 14px;background:#0f172a;border:1px solid #1e293b;border-radius:8px;margin-bottom:14px;">
+        <div id="wl-main-banner" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 14px;background:#0f172a;border:1px solid #1e293b;border-radius:8px;margin-bottom:14px;">
             <span style="color:#f8fafc;font-weight:600;">Watching: ${focusedTN}</span>
             <span style="color:#334155;">|</span>
-            <span style="color:#94a3b8;font-size:0.88em;">${focRP} RP · Proj rank ${focDist.p10}–${focDist.p90} (avg ${focDist.mean})</span>
+            <span style="color:#94a3b8;font-size:0.88em;">${focRP} RP · Proj rank ${focDist.p10}–${focDist.p90} (avg ${focDist.mean})${wlComputedAsOf ? ` · as of ${wlComputedAsOf}` : ''}</span>
+            <button id="wl-update-btn" onclick="renderWatchList()" style="display:none;margin-left:auto;background:#1d4ed8;color:#f8fafc;border:none;border-radius:6px;padding:4px 14px;font-size:0.82em;font-weight:600;cursor:pointer;">Update</button>
         </div>
 
         <div id="wl-progress-wrap" style="margin-bottom:14px;">
