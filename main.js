@@ -80,6 +80,126 @@ window.toggleNotifications = async function () {
 
 window.currentFocusedTeam = null;
 
+// ── NEXUS INTEGRATION ─────────────────────────────────────────────────────────
+// Polls a Cloudflare Worker relay (nexus-relay/worker.js) that receives
+// POST webhooks from frc.nexus and stores the latest payload in KV.
+
+let _nexusInterval  = null;
+let _nexusLastKey   = null; // "label|status" dedup key
+
+const NEXUS_DEFAULT_URL = 'https://nexus-relay.thatsa404.workers.dev';
+
+function getNexusUrl()     { return (localStorage.getItem('nexusRelayUrl') || NEXUS_DEFAULT_URL).trim(); }
+function isNexusEnabled()  { return localStorage.getItem('nexusEnabled') === 'true'; }
+
+async function maybeAutoActivateNexus() {
+    if (isNexusEnabled()) return;
+    const now = Math.floor(Date.now() / 1000);
+    const matches = await db.matches.toArray();
+    const hasFuture = matches.some(m => (m.predictedTime ?? 0) > now && (m.redScore ?? -1) < 0);
+    if (!hasFuture) return;
+    localStorage.setItem('nexusEnabled', 'true');
+    updateNexusUI();
+    startNexusPolling();
+}
+
+function updateNexusUI() {
+    const btn   = document.getElementById('nexusToggleBtn');
+    const label = document.getElementById('nexusToggleLabel');
+    const urlIn = document.getElementById('nexusRelayUrlInput');
+    if (!btn) return;
+    const enabled = isNexusEnabled();
+    const hasUrl  = !!getNexusUrl();
+    if (urlIn && !urlIn.value) urlIn.value = getNexusUrl();
+    btn.style.opacity = (enabled && hasUrl) ? '1' : '0.45';
+    if (label) label.textContent = (enabled && hasUrl) ? 'Connected' : hasUrl ? 'Off' : 'No URL';
+}
+
+function startNexusPolling() {
+    if (_nexusInterval) clearInterval(_nexusInterval);
+    pollNexus();
+    _nexusInterval = setInterval(pollNexus, 12_000);
+}
+
+function stopNexusPolling() {
+    if (_nexusInterval) { clearInterval(_nexusInterval); _nexusInterval = null; }
+    updateNexusStatusBar(null);
+}
+
+async function pollNexus() {
+    const url = getNexusUrl();
+    if (!url) return;
+    try {
+        const resp = await fetch(url, { cache: 'no-store' });
+        if (resp.status === 204) return; // no data yet
+        if (!resp.ok) return;
+        const data = await resp.json();
+        handleNexusPayload(data);
+    } catch { /* network error — silently ignore */ }
+}
+
+function handleNexusPayload(data) {
+    const match = data?.match;
+    if (!match) return;
+    const label  = (match.label  ?? '').trim();
+    const status = (match.status ?? '').trim();
+    if (!label && !status) return;
+
+    updateNexusStatusBar({ label, status });
+
+    // Notify only on status change
+    const key = `${label}|${status}`;
+    if (key === _nexusLastKey) return;
+    _nexusLastKey = key;
+
+    const lc = status.toLowerCase();
+    if (lc === 'on deck') {
+        fireNotif(`📡 On Deck — ${label}`, 'Head to the field queue now.', `nexus-${key}`);
+    } else if (lc === 'on field') {
+        fireNotif(`📡 On Field — ${label}`, 'Match starting soon!', `nexus-${key}`);
+    } else if (lc.includes('result') || lc.includes('posted')) {
+        fireNotif(`📡 Results — ${label}`, status, `nexus-${key}`);
+    }
+}
+
+function updateNexusStatusBar(data) {
+    const bar = document.getElementById('nexus-status-bar');
+    if (!bar) return;
+    if (!data) { bar.style.display = 'none'; return; }
+
+    const { label, status } = data;
+    const lc = status.toLowerCase();
+    let bg = '#1a2332', border = '#334155', textColor = '#94a3b8';
+    if (lc === 'on deck')                              { bg = '#431407'; border = '#c2410c'; textColor = '#fdba74'; }
+    else if (lc === 'on field')                        { bg = '#14532d'; border = '#16a34a'; textColor = '#86efac'; }
+    else if (lc.includes('result') || lc.includes('posted')) { bg = '#1e1b4b'; border = '#4f46e5'; textColor = '#a5b4fc'; }
+
+    bar.style.cssText = `display:flex; background:${bg}; border-color:${border};`;
+    const dotEl   = bar.querySelector('.nexus-dot');
+    const labelEl = bar.querySelector('.nexus-label');
+    if (dotEl)   dotEl.style.background = textColor;
+    if (labelEl) { labelEl.style.color = textColor; labelEl.textContent = `${label} · ${status}`; }
+}
+
+window.toggleNexus = function () {
+    if (!isNexusEnabled() && !getNexusUrl()) { alert('Enter the Relay URL first.'); return; }
+    const nowEnabled = !isNexusEnabled();
+    localStorage.setItem('nexusEnabled', String(nowEnabled));
+    updateNexusUI();
+    if (nowEnabled) startNexusPolling(); else stopNexusPolling();
+};
+
+window.saveNexusUrl = function () {
+    const url = document.getElementById('nexusRelayUrlInput')?.value.trim();
+    if (url) localStorage.setItem('nexusRelayUrl', url);
+    updateNexusUI();
+};
+
+function initNexusIntegration() {
+    updateNexusUI();
+    if (isNexusEnabled() && getNexusUrl()) startNexusPolling();
+}
+
 function updateAppEventKey(eventKey) {
     const subtitle = document.getElementById('headerSubtitle');
     if (eventKey) {
@@ -1782,6 +1902,7 @@ window.syncSchedule = async function () {
 
         statusDiv.innerText = "✅ Schedule Sync Complete!";
         displaySchedule();
+        maybeAutoActivateNexus();
     } catch (err) {
         console.error(err);
         statusDiv.innerText = "❌ TBA Schedule Sync Failed.";
@@ -2026,6 +2147,7 @@ window.loadEventArchive = async function (eventKey) {
         displayScoutingTeams();
         renderPickList();
         renderDraft();
+        maybeAutoActivateNexus();
     } catch (err) {
         if (hint) hint.innerHTML = `<span style="color:#ef4444;font-size:0.82em;">Error: ${err.message}</span>`;
     }
@@ -3242,6 +3364,7 @@ window.syncTBAMatches = async function () {
         watchListDirty = true;
         statusDiv.innerText = `✅ TBA Matches synced (${records.length} qual matches).`;
         displaySchedule();
+        maybeAutoActivateNexus();
     } catch (err) {
         console.error(err);
         statusDiv.innerText = `❌ TBA Matches Sync Failed: ${err.message}`;
@@ -9577,6 +9700,7 @@ const bootApp = async () => {
     initUIMode();
     initColorMode();
     initNotifications();
+    initNexusIntegration();
     setInterval(updateBannerTick, 1000);
     window.switchView('homeView');
 

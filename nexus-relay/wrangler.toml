@@ -1,0 +1,10 @@
+name = "nexus-relay"
+main = "worker.js"
+compatibility_date = "2024-09-23"
+
+kv_namespaces = [
+  { binding = "RELAY_KV", id = "5a6b7b6adb9e4d4e8ca7452783f7e5ff" }
+]
+
+# NEXUS_TOKEN must be set as a secret (not stored here):
+#   wrangler secret put NEXUS_TOKEN
