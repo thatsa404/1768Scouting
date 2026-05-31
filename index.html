@@ -808,6 +808,136 @@
             object-fit: contain; border-radius: 2px;
         }
 
+        /* ── Event Setup Zones ─────────────────────────────────── */
+        .setup-zone {
+            background: #0f172a;
+            border: 1px solid #1e293b;
+            border-radius: 10px;
+            padding: 16px 18px;
+            margin-bottom: 14px;
+        }
+        .setup-zone-primary  { border-color: #1e3a5f; }
+        .setup-zone-secondary { border-color: #1e293b; }
+        .setup-primary-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .setup-archive-hint { flex: 1; min-width: 0; }
+        .setup-cta-btn {
+            padding: 10px 20px;
+            border-radius: 6px;
+            background: #1e3a5f;
+            color: #60a5fa;
+            border: 1px solid #3b82f6;
+            font-size: 1rem;
+            font-weight: 700;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .setup-cta-btn:hover { background: #1e40af; color: #bfdbfe; }
+        .setup-cta-btn-danger {
+            background: #1e293b;
+            color: #ef4444;
+            border-color: #ef4444;
+        }
+        .setup-cta-btn-danger:hover { background: #7f1d1d; color: #fca5a5; }
+        @media (max-width: 600px) {
+            .setup-archive-hint { width: 100%; }
+        }
+        .setup-autosync-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 14px;
+            padding-top: 14px;
+            border-top: 1px solid #1e293b;
+        }
+        .setup-autosync-select {
+            padding: 7px 10px;
+            border-radius: 4px;
+            border: 1px solid #334155;
+            background: #1e293b;
+            color: #f8fafc;
+            font-size: 0.9rem;
+            cursor: pointer;
+        }
+        .setup-zone-divider { border: none; border-top: 1px solid #1e293b; margin: 14px 0; }
+        .setup-section-label {
+            font-size: 0.78em;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+            padding-left: 10px;
+            border-left: 3px solid currentColor;
+        }
+        .setup-label-purple { color: #a78bfa; }
+        .setup-label-green  { color: #34d399; }
+        .setup-label-blue   { color: #60a5fa; }
+        .setup-label-amber  { color: #fbbf24; }
+        .setup-label-red    { color: #f87171; }
+        .setup-label-slate  { color: #94a3b8; }
+        .setup-section-desc {
+            color: #64748b;
+            font-size: 0.85em;
+            margin: 0 0 10px;
+            padding-left: 13px;
+        }
+        .setup-advanced-details {
+            background: #0a0f1a;
+            border: 1px solid #1e293b;
+            border-radius: 10px;
+            margin-bottom: 14px;
+        }
+        .setup-advanced-summary {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 13px 18px;
+            cursor: pointer;
+            list-style: none;
+            user-select: none;
+            border-radius: 10px;
+            transition: background 0.15s;
+        }
+        .setup-advanced-summary::-webkit-details-marker { display: none; }
+        .setup-advanced-summary:hover { background: #0f172a; }
+        .setup-advanced-label {
+            font-size: 0.82em;
+            font-weight: 700;
+            letter-spacing: 0.07em;
+            text-transform: uppercase;
+            color: #475569;
+        }
+        .setup-advanced-details[open] .setup-advanced-label { color: #64748b; }
+        .setup-advanced-chevron { color: #475569; transition: transform 0.15s; }
+        .setup-advanced-details[open] .setup-advanced-chevron { transform: rotate(180deg); }
+        .setup-advanced-body {
+            padding: 4px 18px 18px;
+            border-top: 1px solid #1e293b;
+        }
+        .setup-adv-section { padding: 14px 0; border-bottom: 1px solid #0f172a; }
+        .setup-adv-section:last-child { border-bottom: none; }
+        body.light-mode .setup-zone           { background: #f8fafc; border-color: #e2e8f0; }
+        body.light-mode .setup-zone-primary   { border-color: #bfdbfe; }
+        body.light-mode .setup-cta-btn              { background: #eff6ff; color: #1d4ed8; border-color: #3b82f6; }
+        body.light-mode .setup-cta-btn:hover         { background: #dbeafe; }
+        body.light-mode .setup-cta-btn-danger        { background: #fff1f2; color: #dc2626; border-color: #ef4444; }
+        body.light-mode .setup-cta-btn-danger:hover  { background: #fee2e2; }
+        body.light-mode .setup-autosync-row   { border-top-color: #e2e8f0; }
+        body.light-mode #sync-data-status     { color: #94a3b8; }
+        body.light-mode .setup-autosync-select { background: #fff; color: #0f172a; border-color: #cbd5e1; }
+        body.light-mode .setup-zone-divider   { border-top-color: #e2e8f0; }
+        body.light-mode .setup-section-desc   { color: #64748b; }
+        body.light-mode .setup-advanced-details { background: #f1f5f9; border-color: #e2e8f0; }
+        body.light-mode .setup-advanced-summary:hover { background: #e2e8f0; }
+        body.light-mode .setup-advanced-label { color: #94a3b8; }
+        body.light-mode .setup-advanced-body  { border-top-color: #e2e8f0; }
+        body.light-mode .setup-adv-section    { border-bottom-color: #f1f5f9; }
+
         /* Curation collapsible sections */
         #scouting-curation-content details > summary {
             list-style: none;
@@ -1510,139 +1640,140 @@
         <div id="home-tab-setup" style="display:grid;">
             <img src="wolfhead_transparent.png" aria-hidden="true" style="grid-area:1/1;width:80%;margin:0 auto;align-self:start;opacity:0.2;pointer-events:none;user-select:none;">
             <div style="grid-area:1/1;position:relative;z-index:1;">
-            <div style="margin-bottom:20px;">
-                <label
-                    style="color:#94a3b8;font-size:0.82em;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;display:block;margin-bottom:6px;">Event
-                    Key</label>
-                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-                    <input type="text" id="eventKeyInput" placeholder="2026necmp"
-                        style="padding:10px;border-radius:4px;border:1px solid #334155;background:#1e293b;color:#f8fafc;width:200px;font-size:1rem;">
-                    <button onclick="window.openEventSelector()"
-                        style="padding:8px 14px;border-radius:4px;border:1px solid #475569;background:transparent;color:#94a3b8;cursor:pointer;font-size:0.82em;">Switch Event</button>
-                    <div id="archiveHint"></div>
+            <!-- Zone 1: Primary — event identity + archive + auto-sync -->
+            <div class="setup-zone setup-zone-primary">
+                <div class="setup-primary-row">
+                    <button onclick="window.openEventSelector()" class="setup-cta-btn">Select Event</button>
+                    <button onclick="clearEvent()" class="setup-cta-btn setup-cta-btn-danger">Clear Event</button>
                 </div>
-            </div>
-
-            <!-- Pre-Event -->
-            <div style="border-left:3px solid #3b82f6;padding-left:14px;margin-bottom:24px;">
-                <div
-                    style="color:#60a5fa;font-size:0.78em;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px;">
-                    Pre-Event</div>
-                <p style="color:#64748b;font-size:0.85em;margin:0 0 10px;">Run once before the event. Fetches EPA
-                    histories and the match schedule.</p>
-                <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                    <div style="display:flex;flex-direction:column;gap:3px;">
-                        <button id="btn-syncProjections" onclick="syncProjections()"><img src="tba.png" class="source-logo">Sync team list/history</button>
-                        <span id="ts-statboticsProjections" style="color:#475569;font-size:0.72em;min-height:1em;"></span>
-                    </div>
-                    <div style="display:flex;flex-direction:column;gap:3px;">
-                        <button id="btn-syncSchedule" onclick="syncSchedule()">Sync Schedule</button>
-                        <span id="ts-schedule" style="color:#475569;font-size:0.72em;min-height:1em;"></span>
-                    </div>
+                <div id="status" style="font-size:0.85em;color:#94a3b8;margin-top:6px;min-height:1.1em;"></div>
+                <div id="progressContainer" style="display:none;width:100%;background:#1e293b;margin-top:6px;margin-bottom:4px;border-radius:4px;">
+                    <div id="progressBar" style="width:0%;height:10px;background:#3b82f6;border-radius:4px;transition:width 0.2s;"></div>
                 </div>
-            </div>
-
-            <div id="status" style="font-size:0.85em;color:#94a3b8;margin-bottom:4px;"></div>
-            <div id="progressContainer"
-                style="display:none;width:100%;background:#1e293b;margin-bottom:16px;border-radius:4px;">
-                <div id="progressBar"
-                    style="width:0%;height:10px;background:#3b82f6;border-radius:4px;transition:width 0.2s;"></div>
-            </div>
-
-            <!-- During Event -->
-            <div style="border-left:3px solid #059669;padding-left:14px;margin-bottom:24px;">
-                <div
-                    style="color:#34d399;font-size:0.78em;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px;">
-                    During Event</div>
-                <p style="color:#64748b;font-size:0.85em;margin:0 0 10px;">Sync live results as matches are played.</p>
-                <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;">
-                    <div style="display:flex;flex-direction:column;gap:3px;">
-                        <button id="btn-syncStatboticsLive" onclick="syncStatboticsLive()"><img src="statbotics.ico" class="source-logo">Sync Statbotics Live</button>
-                        <span id="ts-statboticsLive" style="color:#475569;font-size:0.72em;min-height:1em;"></span>
-                    </div>
-                    <div style="display:flex;flex-direction:column;gap:3px;">
-                        <button id="btn-syncTBAOPR" onclick="syncTBAOPR()"><img src="tba.png" class="source-logo">Sync TBA OPR</button>
-                        <span id="ts-tbaOPR" style="color:#475569;font-size:0.72em;min-height:1em;"></span>
-                    </div>
-                    <div style="display:flex;flex-direction:column;gap:3px;">
-                        <button id="btn-syncTBAMatches" onclick="syncTBAMatches()"><img src="tba.png" class="source-logo">Sync TBA Matches</button>
-                        <span id="ts-tbaMatches" style="color:#475569;font-size:0.72em;min-height:1em;"></span>
-                    </div>
-                </div>
-                <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-                    <button id="autoSyncBtn" onclick="toggleAutoSync()" style="background:#059669;">Start
-                        Auto-Sync</button>
-                    <select id="autoSyncInterval"
-                        style="padding:7px 10px;border-radius:4px;border:1px solid #334155;background:#1e293b;color:#f8fafc;font-size:0.9rem;cursor:pointer;">
+                <div class="setup-autosync-row">
+                    <button id="autoSyncBtn" onclick="toggleAutoSync()" style="background:#059669;">Start Auto-Sync</button>
+                    <select id="autoSyncInterval" class="setup-autosync-select">
+                        <option value="1">Every 60 sec</option>
                         <option value="5">Every 5 min</option>
                         <option value="7">Every 7 min</option>
                         <option value="10">Every 10 min</option>
                     </select>
-                    <span id="autoSyncStatus"
-                        style="color:#94a3b8;font-size:0.85em;font-variant-numeric:tabular-nums;"></span>
+                    <span id="autoSyncStatus" style="color:#94a3b8;font-size:0.85em;font-variant-numeric:tabular-nums;"></span>
+                </div>
+                <div id="sync-data-status"
+                     style="font-size:0.76em; color:#475569; margin-top:6px; font-variant-numeric:tabular-nums; min-height:1em;"></div>
+            </div>
+
+            <!-- Zone 2: Secondary — scouting data + share config -->
+            <div class="setup-zone setup-zone-secondary">
+                <div class="setup-section-label setup-label-purple">Scouting Data</div>
+                <p class="setup-section-desc">Import team observations from Google Sheets or a local archive.</p>
+                <div id="scouting-data-section"></div>
+                <div class="setup-zone-divider"></div>
+                <div class="setup-section-label setup-label-green">Share Config</div>
+                <p class="setup-section-desc">Share or transfer manual adjustments with other devices.</p>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                    <button id="shareAdjLinkBtn" onclick="shareAdjLink()" style="background:#1e293b;color:#34d399;border:1px solid #34d399;">⬡ Copy Link</button>
+                    <button onclick="exportAdjBundle()" style="background:#1e293b;color:#34d399;border:1px solid #34d399;">↓ Export Adj</button>
+                    <button onclick="document.getElementById('adjImportInput').click()" style="background:#1e293b;color:#34d399;border:1px solid #34d399;">↑ Import Adj</button>
                 </div>
             </div>
 
-            <!-- Scouting Data -->
-            <div style="border-left:3px solid #8b5cf6;padding-left:14px;margin-bottom:24px;">
-                <div style="color:#a78bfa;font-size:0.78em;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px;">Scouting Data</div>
-                <p style="color:#64748b;font-size:0.85em;margin:0 0 10px;">Import team scouting observations from Google Sheets or a local archive.</p>
-                <div id="scouting-data-section"></div>
-            </div>
-
+            <!-- Hidden file input outside collapsible (click-proxy requirement) -->
             <input type="file" id="adjImportInput" accept=".json" style="display:none" onchange="importAdjFile(this)">
 
-            <div style="margin-top:24px;padding-top:16px;border-top:1px solid #1e293b;display:flex;flex-direction:column;gap:18px;">
+            <!-- Zone 3: Advanced — collapsible, zero JS -->
+            <details class="setup-advanced-details">
+                <summary class="setup-advanced-summary">
+                    <span class="setup-advanced-label">Advanced</span>
+                    <span class="setup-advanced-chevron">▾</span>
+                </summary>
+                <div class="setup-advanced-body">
 
-                <!-- Clear Data -->
-                <div style="border-left:3px solid #ef4444;padding-left:14px;">
-                    <div style="color:#f87171;font-size:0.78em;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px;">Clear Data</div>
-                    <p style="color:#64748b;font-size:0.85em;margin:0 0 10px;">Remove cached API data, scouting entries, or all event data.</p>
-                    <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                        <button onclick="clearCache()" style="background:#1e293b;color:#ef4444;border:1px solid #ef4444;">Clear API Data</button>
-                        <button onclick="clearScouting()" style="background:#1e293b;color:#ef4444;border:1px solid #ef4444;">Clear Scouting</button>
-                        <button onclick="clearEvent()" style="background:#1e293b;color:#ef4444;border:1px solid #ef4444;">Clear Event</button>
+                    <!-- Custom event key -->
+                    <div class="setup-adv-section">
+                        <div class="setup-section-label setup-label-slate">Custom Event Key</div>
+                        <p class="setup-section-desc">Type a raw event key (e.g. 2026necmp) if it isn't in the Switch Event list.</p>
+                        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                            <input type="text" id="eventKeyInput" placeholder="2026necmp"
+                                style="padding:10px;border-radius:4px;border:1px solid #334155;background:#1e293b;color:#f8fafc;width:200px;font-size:1rem;">
+                            <button onclick="updateAppEventKey(document.getElementById('eventKeyInput').value.trim())"
+                                style="padding:8px 14px;border-radius:4px;border:1px solid #475569;background:transparent;color:#94a3b8;cursor:pointer;font-size:0.82em;">Apply</button>
+                        </div>
+                        <div id="archiveHint" style="margin-top:8px;"></div>
                     </div>
-                </div>
 
-                <!-- Share Config -->
-                <div style="border-left:3px solid #34d399;padding-left:14px;">
-                    <div style="color:#34d399;font-size:0.78em;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px;">Share Config</div>
-                    <p style="color:#64748b;font-size:0.85em;margin:0 0 10px;">Share or transfer manual adjustments (pick list notes, adj scores) with other devices.</p>
-                    <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                        <button id="shareAdjLinkBtn" onclick="shareAdjLink()" style="background:#1e293b;color:#34d399;border:1px solid #34d399;">⬡ Copy Link</button>
-                        <button onclick="exportAdjBundle()" style="background:#1e293b;color:#34d399;border:1px solid #34d399;">↓ Export Adj</button>
-                        <button onclick="document.getElementById('adjImportInput').click()" style="background:#1e293b;color:#34d399;border:1px solid #34d399;">↑ Import Adj</button>
+                    <!-- Pre-Event syncs -->
+                    <div class="setup-adv-section">
+                        <div class="setup-section-label setup-label-blue">Pre-Event</div>
+                        <p class="setup-section-desc">Run once before the event. Fetches EPA histories and the match schedule.</p>
+                        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                            <div style="display:flex;flex-direction:column;gap:3px;">
+                                <button id="btn-syncProjections" onclick="syncProjections()"><img src="tba.png" class="source-logo">Sync team list/history</button>
+                                <span id="ts-statboticsProjections" style="color:#475569;font-size:0.72em;min-height:1em;"></span>
+                            </div>
+                            <div style="display:flex;flex-direction:column;gap:3px;">
+                                <button id="btn-syncSchedule" onclick="syncSchedule()">Sync Schedule</button>
+                                <span id="ts-schedule" style="color:#475569;font-size:0.72em;min-height:1em;"></span>
+                            </div>
+                        </div>
                     </div>
-                </div>
 
-                <!-- Nexus Integration -->
-                <div style="border-left:3px solid #f59e0b;padding-left:14px;margin-bottom:24px;">
-                    <div style="color:#fbbf24;font-size:0.78em;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px;">Nexus Live Status</div>
-                    <p style="color:#64748b;font-size:0.85em;margin:0 0 10px;">Receive real-time match status from FRC Nexus via a Cloudflare Worker relay. See <code style="font-size:0.9em;color:#94a3b8;">nexus-relay/worker.js</code> for setup instructions.</p>
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
-                        <input id="nexusRelayUrlInput" type="url" placeholder="https://nexus-relay.yourname.workers.dev"
-                            style="padding:8px 10px;border-radius:4px;border:1px solid #334155;background:#0f172a;color:#f8fafc;font-size:0.85em;width:280px;"
-                            onblur="window.saveNexusUrl()">
-                        <button onclick="window.toggleNexus()"
-                            style="padding:8px 14px;border-radius:4px;border:1px solid #f59e0b;background:transparent;color:#fbbf24;cursor:pointer;font-size:0.85em;">
-                            📡 <span id="nexusToggleLabel">Off</span>
-                            <span id="nexusToggleBtn" style="opacity:0.45;"></span>
-                        </button>
+                    <!-- Manual live syncs -->
+                    <div class="setup-adv-section">
+                        <div class="setup-section-label setup-label-green">Manual Sync</div>
+                        <p class="setup-section-desc">Manually pull live results. Auto-Sync in the main panel handles this during events.</p>
+                        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                            <div style="display:flex;flex-direction:column;gap:3px;">
+                                <button id="btn-syncStatboticsLive" onclick="syncStatboticsLive()"><img src="statbotics.ico" class="source-logo">Sync Statbotics Live</button>
+                                <span id="ts-statboticsLive" style="color:#475569;font-size:0.72em;min-height:1em;"></span>
+                            </div>
+                            <div style="display:flex;flex-direction:column;gap:3px;">
+                                <button id="btn-syncTBAOPR" onclick="syncTBAOPR()"><img src="tba.png" class="source-logo">Sync TBA OPR</button>
+                                <span id="ts-tbaOPR" style="color:#475569;font-size:0.72em;min-height:1em;"></span>
+                            </div>
+                            <div style="display:flex;flex-direction:column;gap:3px;">
+                                <button id="btn-syncTBAMatches" onclick="syncTBAMatches()"><img src="tba.png" class="source-logo">Sync TBA Matches</button>
+                                <span id="ts-tbaMatches" style="color:#475569;font-size:0.72em;min-height:1em;"></span>
+                            </div>
+                        </div>
                     </div>
-                    <p style="color:#475569;font-size:0.78em;margin:0;">Status appears in the bar below the header. Notifications follow your notification settings.</p>
-                </div>
 
-                <!-- Save Archive -->
-                <div style="border-left:3px solid #60a5fa;padding-left:14px;">
-                    <div style="color:#60a5fa;font-size:0.78em;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px;">Save Archive</div>
-                    <p style="color:#64748b;font-size:0.85em;margin:0 0 10px;">Export a full snapshot of all synced and scouted data for this event.</p>
-                    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                    <!-- Nexus Live Status -->
+                    <div class="setup-adv-section">
+                        <div class="setup-section-label setup-label-amber">Nexus Live Status</div>
+                        <p class="setup-section-desc">Receive real-time match status from FRC Nexus via a Cloudflare Worker relay. See <code style="font-size:0.9em;color:#94a3b8;">nexus-relay/worker.js</code> for setup.</p>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
+                            <input id="nexusRelayUrlInput" type="url" placeholder="https://nexus-relay.yourname.workers.dev"
+                                style="padding:8px 10px;border-radius:4px;border:1px solid #334155;background:#0f172a;color:#f8fafc;font-size:0.85em;width:280px;"
+                                onblur="window.saveNexusUrl()">
+                            <button onclick="window.toggleNexus()"
+                                style="padding:8px 14px;border-radius:4px;border:1px solid #f59e0b;background:transparent;color:#fbbf24;cursor:pointer;font-size:0.85em;">
+                                📡 <span id="nexusToggleLabel">Off</span><span id="nexusToggleBtn" style="opacity:0.45;"></span>
+                            </button>
+                        </div>
+                        <p style="color:#475569;font-size:0.78em;margin:0;">Status appears in the bar below the header. Notifications follow your notification settings.</p>
+                    </div>
+
+                    <!-- Save Archive -->
+                    <div class="setup-adv-section">
+                        <div class="setup-section-label setup-label-blue">Save Archive</div>
+                        <p class="setup-section-desc">Export a full snapshot of all synced and scouted data for this event.</p>
                         <button onclick="saveScoutingArchive()" style="background:#1e293b;color:#60a5fa;border:1px solid #60a5fa;">↓ Save Event Archive</button>
                     </div>
-                </div>
 
-            </div>
+                    <!-- Clear Data -->
+                    <div class="setup-adv-section">
+                        <div class="setup-section-label setup-label-red">Clear Data</div>
+                        <p class="setup-section-desc">Remove cached API data, scouting entries, or all event data.</p>
+                        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                            <button onclick="clearCache()" style="background:#1e293b;color:#ef4444;border:1px solid #ef4444;">Clear API Data</button>
+                            <button onclick="clearScouting()" style="background:#1e293b;color:#ef4444;border:1px solid #ef4444;">Clear Scouting</button>
+                        </div>
+                    </div>
+
+                </div>
+            </details>
             </div><!-- end z-index wrapper -->
         </div>
 

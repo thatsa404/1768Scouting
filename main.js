@@ -20,6 +20,9 @@ window.db = db;
 // 2. CONFIG & API KEYS
 const TBA_BASE = 'https://www.thebluealliance.com/api/v3';
 const TBA_KEY = import.meta.env.VITE_TBA_KEY;
+const _tbaCache = new Map(); // endpoint → { etag, data }
+let _tbaGotFreshData = false;  // reset per _runTBASyncs cycle
+let _tbaLastFreshMs  = null;   // timestamp of last non-304 TBA response
 const YT_KEY = import.meta.env.VITE_YOUTUBE_KEY || '';
 
 // SCOUTING_SOURCES is imported as EVENT_SOURCES from ./games/registry.js above.
@@ -118,7 +121,7 @@ function updateNexusUI() {
 function startNexusPolling() {
     if (_nexusInterval) clearInterval(_nexusInterval);
     pollNexus();
-    _nexusInterval = setInterval(pollNexus, 12_000);
+    _nexusInterval = setInterval(pollNexus, 20_000);
 }
 
 function stopNexusPolling() {
@@ -129,6 +132,21 @@ function stopNexusPolling() {
 async function pollNexus() {
     const url = getNexusUrl();
     if (!url) return;
+
+    // Only hit the worker when team 1768 has an unplayed match predicted within the next hour.
+    // If no schedule is loaded yet (our1768 is empty) we allow the poll as a fallback.
+    const now = Math.floor(Date.now() / 1000);
+    const allMatches = await db.matches.toArray();
+    const our1768 = allMatches.filter(m => m.red?.includes('1768') || m.blue?.includes('1768'));
+    if (our1768.length > 0) {
+        const soonUnplayed = our1768.some(m =>
+            (m.redScore ?? -1) < 0 &&
+            (m.predictedTime ?? 0) > now &&
+            (m.predictedTime ?? 0) <= now + 3600
+        );
+        if (!soonUnplayed) return;
+    }
+
     try {
         const resp = await fetch(url, { cache: 'no-store' });
         if (resp.status === 204) return; // no data yet
@@ -445,10 +463,21 @@ function epaRankTier(allTeams, myVal, fieldFn) {
 
 
 async function fetchTBA(endpoint) {
-    const response = await fetch(`${TBA_BASE}${endpoint}`, {
-        headers: { 'X-TBA-Auth-Key': TBA_KEY }
-    });
-    return await response.json();
+    const cached = _tbaCache.get(endpoint);
+    const headers = { 'X-TBA-Auth-Key': TBA_KEY };
+    if (cached?.etag) headers['If-None-Match'] = cached.etag;
+
+    const response = await fetch(`${TBA_BASE}${endpoint}`, { headers });
+
+    if (response.status === 304 && cached) return cached.data;
+    if (!response.ok) throw new Error(`TBA ${response.status}: ${endpoint}`);
+
+    const etag = response.headers.get('ETag');
+    const data = await response.json();
+    if (etag) _tbaCache.set(endpoint, { etag, data });
+    _tbaGotFreshData = true;
+    _tbaLastFreshMs  = Date.now();
+    return data;
 }
 
 window.fetchSchedule = async function (eventKey) {
@@ -1847,6 +1876,23 @@ window.syncStatboticsLive = async function () {
     statusDiv.textContent = `✅ Live Statbotics sync complete — ${updated} team${updated !== 1 ? 's' : ''} updated.`;
 };
 
+async function _fetchAndStoreWebcasts(eventKey) {
+    const evData = await fetchTBA(`/event/${eventKey}`);
+    const webcasts = (evData.webcasts || []).filter(w => w.type === 'youtube');
+    if (YT_KEY && webcasts.length > 0) {
+        const ids = webcasts.map(w => w.channel).join(',');
+        const ytData = await fetch(
+            `https://www.googleapis.com/youtube/v3/videos?id=${ids}&part=liveStreamingDetails&key=${YT_KEY}`
+        ).then(r => r.json());
+        for (const item of (ytData.items || [])) {
+            const wc = webcasts.find(w => w.channel === item.id);
+            const startStr = item.liveStreamingDetails?.actualStartTime;
+            if (wc && startStr) wc.startTimestamp = Math.floor(new Date(startStr).getTime() / 1000);
+        }
+    }
+    localStorage.setItem(`webcasts_${eventKey}`, JSON.stringify(webcasts));
+}
+
 window.syncSchedule = async function () {
     const eventKey = document.getElementById('eventKeyInput').value.trim().toLowerCase();
     if (!eventKey) return alert("Please enter an Event Key.");
@@ -1881,24 +1927,7 @@ window.syncSchedule = async function () {
         })));
 
         // Fetch webcasts from event metadata, then enrich with YouTube stream start times
-        try {
-            const evData = await fetchTBA(`/event/${eventKey}`);
-            const webcasts = (evData.webcasts || []).filter(w => w.type === 'youtube');
-            if (YT_KEY && webcasts.length > 0) {
-                const ids = webcasts.map(w => w.channel).join(',');
-                const ytData = await fetch(
-                    `https://www.googleapis.com/youtube/v3/videos?id=${ids}&part=liveStreamingDetails&key=${YT_KEY}`
-                ).then(r => r.json());
-                for (const item of (ytData.items || [])) {
-                    const wc = webcasts.find(w => w.channel === item.id);
-                    const startStr = item.liveStreamingDetails?.actualStartTime;
-                    if (wc && startStr) wc.startTimestamp = Math.floor(new Date(startStr).getTime() / 1000);
-                }
-            }
-            localStorage.setItem(`webcasts_${eventKey}`, JSON.stringify(webcasts));
-        } catch (e) {
-            console.warn('Could not fetch webcasts:', e);
-        }
+        try { await _fetchAndStoreWebcasts(eventKey); } catch (e) { console.warn('Could not fetch webcasts:', e); }
 
         statusDiv.innerText = "✅ Schedule Sync Complete!";
         displaySchedule();
@@ -1932,13 +1961,62 @@ window.syncAll = async function () {
 // ── Auto-sync ─────────────────────────────────────────────────────────────
 
 let _autoSyncTimer = null;
-let _autoSyncTick = null;
+let _autoSyncTick  = null;
 let _autoSyncCountdown = 0;
 
-async function runDuringEventSyncs() {
-    await window.syncStatboticsLive();
+// Statbotics is triggered by TBA non-304s, not a fixed clock.
+// A random 3–5 min per-device jitter spreads load across devices.
+let _statboticsJitterTimer  = null;  // one-shot setTimeout
+let _statboticsJitterFireAt = null;  // epoch ms when it will fire
+let _statboticsLastMs       = null;  // epoch ms of last completed syncStatboticsLive
+
+function _scheduleJitteredStatbotics() {
+    if (_statboticsJitterTimer) return; // already pending
+    const delayMs = 180_000 + Math.random() * 120_000; // 3–5 min
+    _statboticsJitterFireAt = Date.now() + delayMs;
+    _updateSyncDataStatus();
+    _statboticsJitterTimer = setTimeout(async () => {
+        _statboticsJitterTimer  = null;
+        _statboticsJitterFireAt = null;
+        await window.syncStatboticsLive();
+        _statboticsLastMs = Date.now();
+        _updateSyncDataStatus();
+    }, delayMs);
+}
+
+function _fmtAgo(ms) {
+    const s = Math.floor(ms / 1000);
+    if (s < 90)  return 'just now';
+    const m = Math.floor(s / 60);
+    if (m < 60)  return `${m}m ago`;
+    return `${Math.floor(m / 60)}h ago`;
+}
+
+function _updateSyncDataStatus() {
+    const el = document.getElementById('sync-data-status');
+    if (!el) return;
+    const now = Date.now();
+    const parts = [];
+
+    if (_tbaLastFreshMs) {
+        parts.push(`TBA update: ${_fmtAgo(now - _tbaLastFreshMs)}`);
+    }
+
+    if (_statboticsJitterFireAt) {
+        const inMin = Math.ceil(Math.max(0, _statboticsJitterFireAt - now) / 60_000);
+        parts.push(`Statbotics: updating in ~${inMin}m`);
+    } else if (_statboticsLastMs) {
+        parts.push(`Statbotics: ${_fmtAgo(now - _statboticsLastMs)}`);
+    }
+
+    el.textContent = parts.join('  ·  ');
+}
+
+async function _runTBASyncs() {
+    _tbaGotFreshData = false;
     await window.syncTBAOPR();
     await window.syncTBAMatches();
+    if (_tbaGotFreshData) _scheduleJitteredStatbotics();
 }
 
 function _updateAutoSyncStatus() {
@@ -1953,29 +2031,40 @@ window.toggleAutoSync = function () {
     if (_autoSyncTimer) {
         clearInterval(_autoSyncTimer);
         clearInterval(_autoSyncTick);
-        _autoSyncTimer = null;
-        _autoSyncTick = null;
+        clearTimeout(_statboticsJitterTimer);
+        _autoSyncTimer         = null;
+        _autoSyncTick          = null;
+        _statboticsJitterTimer  = null;
+        _statboticsJitterFireAt = null;
         const btn = document.getElementById('autoSyncBtn');
         const sel = document.getElementById('autoSyncInterval');
         if (btn) { btn.textContent = 'Start Auto-Sync'; btn.style.background = '#059669'; }
         if (sel) sel.disabled = false;
         const status = document.getElementById('autoSyncStatus');
         if (status) status.textContent = '';
+        _updateSyncDataStatus();
     } else {
         const minutes = parseInt(document.getElementById('autoSyncInterval')?.value || '5', 10);
         const totalSeconds = minutes * 60;
         _autoSyncCountdown = totalSeconds;
 
-        runDuringEventSyncs();
+        // TBA immediately; schedules jitter if fresh data comes back
+        _runTBASyncs();
+        // Statbotics baseline run immediately; subsequent runs are TBA-triggered
+        window.syncStatboticsLive().then(() => {
+            _statboticsLastMs = Date.now();
+            _updateSyncDataStatus();
+        });
 
         _autoSyncTimer = setInterval(() => {
             _autoSyncCountdown = totalSeconds;
-            runDuringEventSyncs();
+            _runTBASyncs();
         }, totalSeconds * 1000);
 
         _autoSyncTick = setInterval(() => {
             _autoSyncCountdown = Math.max(0, _autoSyncCountdown - 1);
             _updateAutoSyncStatus();
+            _updateSyncDataStatus();
         }, 1000);
 
         const btn = document.getElementById('autoSyncBtn');
@@ -2148,6 +2237,13 @@ window.loadEventArchive = async function (eventKey) {
         renderPickList();
         renderDraft();
         maybeAutoActivateNexus();
+
+        // Auto-fetch webcasts if the archive had matches but no webcast data was bundled
+        const hasMatches = !!(data.matches?.length);
+        const hasWebcasts = !!(JSON.parse(localStorage.getItem(`webcasts_${eventKey}`) || '[]').length);
+        if (hasMatches && !hasWebcasts) {
+            _fetchAndStoreWebcasts(eventKey).catch(e => console.warn('Could not fetch webcasts:', e));
+        }
     } catch (err) {
         if (hint) hint.innerHTML = `<span style="color:#ef4444;font-size:0.82em;">Error: ${err.message}</span>`;
     }
@@ -2656,6 +2752,11 @@ window.clearEvent = async function () {
         await renderPickList();
         renderScoutingSection();
         displayScoutingTeams();
+
+        localStorage.removeItem('lastEventKey');
+        const keyInput = document.getElementById('eventKeyInput');
+        if (keyInput) keyInput.value = '';
+        updateAppEventKey(null);
     } catch (err) {
         console.error('Error clearing event:', err);
         alert('Failed to clear event data. Check console for details.');
@@ -3365,6 +3466,11 @@ window.syncTBAMatches = async function () {
         statusDiv.innerText = `✅ TBA Matches synced (${records.length} qual matches).`;
         displaySchedule();
         maybeAutoActivateNexus();
+
+        // Auto-fetch webcasts if they haven't been stored yet for this event
+        if (!JSON.parse(localStorage.getItem(`webcasts_${eventKey}`) || '[]').length) {
+            _fetchAndStoreWebcasts(eventKey).catch(e => console.warn('Could not fetch webcasts:', e));
+        }
     } catch (err) {
         console.error(err);
         statusDiv.innerText = `❌ TBA Matches Sync Failed: ${err.message}`;

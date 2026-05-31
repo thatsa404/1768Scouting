@@ -31,6 +31,17 @@ Combine match details from overview tab to matches...
 
 
 
+D/ND - TBA cache header (60s update?), Statbotics stay at or cue based on TBA information (+60s)
+D - Nexus calls only within 1 hour of expected match
+D - Clean up the event setup page - based on common user experience (Decent start)
+
+
+
+
+
+
+
+
 
 
 
