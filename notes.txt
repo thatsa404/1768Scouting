@@ -36,7 +36,9 @@ D - Nexus calls only within 1 hour of expected match
 D - Clean up the event setup page - based on common user experience (Decent start)
 
 
-
+Add a local Statbotics implementation for event teams only, given input histories/starting EPAs run sequential calculations after every match. Ths should be toggleable on the event setup page - if it is toggled, the auto-sync function does not query statbotics live during the event and relies on locally updating instead, which should be much faster but could hypothetically be different. THe EPA algorithm description is located at: https://www.statbotics.io/blog/epa
+Incorporate Nexus-provided elim brackets & alliances - Blue alliance does not update with elim alliances quickly enough, whereas FRC Nexus is a more rapid source for alliance info and bracket. Upon user command, I want to load all playoff match data from the nexus relay (without a separate webhook if possible, please investigate this). As default, assume 8 alliances with 3 teams, playing a double-elimination bracket. Add customization for abnormal brackets in the future. Some API information is located at: https://frc.nexus/en/api
+Add the ability to customize pick lists. One option is strict ordering (which is currently implemented). Another should be categorical, where teams are added to ranked categoreis ("Great", "Good", "Meh", "DNP", etc.). These categores are different than the tiers already implemented (S/A/B, etc.), but when teams are displayed in their category, they should be colored by the tier they occupy.
 
 
 

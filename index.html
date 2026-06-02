@@ -929,6 +929,10 @@
         body.light-mode .setup-cta-btn-danger:hover  { background: #fee2e2; }
         body.light-mode .setup-autosync-row   { border-top-color: #e2e8f0; }
         body.light-mode #sync-data-status     { color: #94a3b8; }
+        .notes-team-section > summary { list-style: none; cursor: pointer; }
+        .notes-team-section > summary::-webkit-details-marker { display: none; }
+        .notes-chevron { display: inline-block; transition: transform 0.15s; transform: rotate(-90deg); }
+        .notes-team-section[open] .notes-chevron { transform: rotate(0deg); }
         body.light-mode .setup-autosync-select { background: #fff; color: #0f172a; border-color: #cbd5e1; }
         body.light-mode .setup-zone-divider   { border-top-color: #e2e8f0; }
         body.light-mode .setup-section-desc   { color: #64748b; }
@@ -1643,7 +1647,7 @@
             <!-- Zone 1: Primary — event identity + archive + auto-sync -->
             <div class="setup-zone setup-zone-primary">
                 <div class="setup-primary-row">
-                    <button onclick="window.openEventSelector()" class="setup-cta-btn">Select Event</button>
+                    <button id="selectEventBtn" onclick="window.openEventSelector()" class="setup-cta-btn">Select Event</button>
                     <button onclick="clearEvent()" class="setup-cta-btn setup-cta-btn-danger">Clear Event</button>
                 </div>
                 <div id="status" style="font-size:0.85em;color:#94a3b8;margin-top:6px;min-height:1.1em;"></div>
@@ -1659,6 +1663,7 @@
                         <option value="10">Every 10 min</option>
                     </select>
                     <span id="autoSyncStatus" style="color:#94a3b8;font-size:0.85em;font-variant-numeric:tabular-nums;"></span>
+                    <span style="width:100%;font-size:0.78em;color:#475569;margin-top:2px;">For ongoing events — keeps data current as matches are played.</span>
                 </div>
                 <div id="sync-data-status"
                      style="font-size:0.76em; color:#475569; margin-top:6px; font-variant-numeric:tabular-nums; min-height:1em;"></div>
@@ -1666,9 +1671,16 @@
 
             <!-- Zone 2: Secondary — scouting data + share config -->
             <div class="setup-zone setup-zone-secondary">
-                <div class="setup-section-label setup-label-purple">Scouting Data</div>
-                <p class="setup-section-desc">Import team observations from Google Sheets or a local archive.</p>
-                <div id="scouting-data-section"></div>
+                <details class="setup-advanced-details" style="margin-bottom:0;">
+                    <summary class="setup-advanced-summary">
+                        <span class="setup-advanced-label" style="color:#a78bfa;">Scouting Data</span>
+                        <span class="setup-advanced-chevron">▾</span>
+                    </summary>
+                    <div class="setup-advanced-body">
+                        <p class="setup-section-desc" style="margin-top:10px;">Import team observations from Google Sheets or a local archive.</p>
+                        <div id="scouting-data-section"></div>
+                    </div>
+                </details>
                 <div class="setup-zone-divider"></div>
                 <div class="setup-section-label setup-label-green">Share Config</div>
                 <p class="setup-section-desc">Share or transfer manual adjustments with other devices.</p>
@@ -1970,6 +1982,7 @@
                 style="margin-top:0;margin-bottom:12px;border-bottom:1px solid #1e293b;padding-bottom:4px;">
                 <button class="detail-tab-btn active" onclick="switchScoutingSubTab('teams')">Teams</button>
                 <button class="detail-tab-btn" onclick="switchScoutingSubTab('curation')">Data Curation</button>
+                <button class="detail-tab-btn" onclick="switchScoutingSubTab('notes')">Notes</button>
             </div>
 
             <div id="scouting-subtab-teams">
@@ -1999,6 +2012,10 @@
                 <div id="scouting-curation-content">
                     <p style="color:#64748b;font-style:italic;margin-top:20px;">Loading curation data…</p>
                 </div>
+            </div>
+
+            <div id="scouting-subtab-notes" style="display:none;">
+                <div id="scouting-notes-content"></div>
             </div>
         </div>
 

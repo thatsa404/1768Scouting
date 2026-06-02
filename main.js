@@ -220,12 +220,15 @@ function initNexusIntegration() {
 
 function updateAppEventKey(eventKey) {
     const subtitle = document.getElementById('headerSubtitle');
+    const selectBtn = document.getElementById('selectEventBtn');
     if (eventKey) {
         if (subtitle) subtitle.textContent = eventKey;
         document.title = `Nashoba Robotics — ${eventKey}`;
+        if (selectBtn) selectBtn.textContent = 'Switch Event';
     } else {
         if (subtitle) subtitle.textContent = 'Event Hub';
         document.title = 'Nashoba Robotics — Event Hub';
+        if (selectBtn) selectBtn.textContent = 'Select Event';
     }
 }
 
@@ -284,6 +287,11 @@ window.closeEventSelector = function () {
 
 window.selectPresetEvent = async function (key) {
     const input = document.getElementById('eventKeyInput');
+    const existingKey = input?.value.trim().toLowerCase();
+    if (existingKey && existingKey !== key) {
+        await _silentClearEvent(existingKey);
+    }
+
     if (input) input.value = key;
     localStorage.setItem('lastEventKey', key);
     updateAppEventKey(key);
@@ -353,6 +361,22 @@ function allNoteDisplayLines(teamNumber) {
         .sort((a, b) => (a.qm ?? Infinity) - (b.qm ?? Infinity))
         .map(n => n.qm != null ? `(QM ${n.qm}) ${n.text}` : n.text);
 }
+function _getEventNotes(eventKey) {
+    if (!eventKey) return [];
+    try { return JSON.parse(localStorage.getItem(`eventNotes_${eventKey}`) || '[]'); } catch { return []; }
+}
+function _saveEventNote(note, eventKey) {
+    if (!eventKey) return;
+    const notes = _getEventNotes(eventKey);
+    const idx = notes.findIndex(n => n.id === note.id);
+    if (idx >= 0) notes[idx] = note; else notes.push(note);
+    localStorage.setItem(`eventNotes_${eventKey}`, JSON.stringify(notes));
+}
+function _deleteEventNote(id, eventKey) {
+    if (!eventKey) return;
+    localStorage.setItem(`eventNotes_${eventKey}`, JSON.stringify(_getEventNotes(eventKey).filter(n => n.id !== id)));
+}
+
 function saveTeamNote(teamNumber, text, qm = null) {
     const all = getTeamNotes();
     const teamKey = String(teamNumber);
@@ -2699,51 +2723,54 @@ window.clearCache = async function () {
     }
 };
 
+async function _silentClearEvent(eventKey) {
+    await db.teams.clear();
+    await db.tbaTeams.clear();
+    await db.matches.clear();
+
+    for (const key of ['statboticsLive', 'tbaOPR', 'tbaMatches', 'statboticsProjections']) {
+        localStorage.removeItem(`lastSync_${key}`);
+        const el = document.getElementById(`ts-${key}`);
+        if (el) el.textContent = '';
+    }
+    localStorage.removeItem(`archiveCoverage_${eventKey}`);
+    localStorage.removeItem(`scoutingData_${eventKey}`);
+    localStorage.removeItem(`scoutingFusedStats_${eventKey}`);
+    localStorage.removeItem('lastSync_scoutingData');
+    localStorage.removeItem(`pitData_${eventKey}`);
+    localStorage.removeItem('lastSync_pitData');
+    localStorage.removeItem(`tbaAlliances_${eventKey}`);
+    localStorage.removeItem('mockDraftState');
+    localStorage.removeItem('realDraftState');
+    localStorage.removeItem(`rpThresholds_${eventKey}`);
+    localStorage.removeItem(`wlCalibrationBeta_${eventKey}`);
+    localStorage.removeItem(`wlPreEventSnapshot_${eventKey}`);
+    localStorage.removeItem(`webcasts_${eventKey}`);
+    localStorage.removeItem(`eventNotes_${eventKey}`);
+
+    _bannerMatchTime = null;
+    const _cb = document.getElementById('match-countdown-banner');
+    if (_cb) _cb.style.display = 'none';
+    wlDetailCache = null;
+    wlPreEventCache = null;
+    wlComputedAsOf = null;
+    wlCalibrationBeta = 0.982;
+    watchListDirty = true;
+
+    if (teamChartInstance) { teamChartInstance.destroy(); teamChartInstance = null; }
+    if (tbaChartInstance) { tbaChartInstance.destroy(); tbaChartInstance = null; }
+    if (matchInfluenceChartInstance) { matchInfluenceChartInstance.destroy(); matchInfluenceChartInstance = null; }
+    if (dashboardChartInstance) { dashboardChartInstance.destroy(); dashboardChartInstance = null; }
+}
+
 window.clearEvent = async function () {
     const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
     if (!eventKey) { alert('No event key set — enter one first.'); return; }
     if (!confirm(`Clear all data for ${eventKey} (API cache, scouting, and pit data)? This cannot be undone.`)) return;
 
     try {
-        await db.teams.clear();
-        await db.tbaTeams.clear();
-        await db.matches.clear();
-
-        for (const key of ['statboticsLive', 'tbaOPR', 'tbaMatches', 'statboticsProjections']) {
-            localStorage.removeItem(`lastSync_${key}`);
-            const el = document.getElementById(`ts-${key}`);
-            if (el) el.textContent = '';
-        }
-        localStorage.removeItem(`archiveCoverage_${eventKey}`);
+        await _silentClearEvent(eventKey);
         updateOBEStatus(eventKey);
-        localStorage.removeItem(`scoutingData_${eventKey}`);
-        localStorage.removeItem(`scoutingFusedStats_${eventKey}`);
-        localStorage.removeItem('lastSync_scoutingData');
-        localStorage.removeItem(`pitData_${eventKey}`);
-        localStorage.removeItem('lastSync_pitData');
-        localStorage.removeItem(`tbaAlliances_${eventKey}`);
-        localStorage.removeItem('mockDraftState');
-        localStorage.removeItem('realDraftState');
-        localStorage.removeItem(`rpThresholds_${eventKey}`);
-        localStorage.removeItem(`wlCalibrationBeta_${eventKey}`);
-        localStorage.removeItem(`wlPreEventSnapshot_${eventKey}`);
-        localStorage.removeItem(`webcasts_${eventKey}`);
-
-        // Clear module-level caches so stale data doesn't persist across renders
-        _bannerMatchTime = null;
-        const _cb = document.getElementById('match-countdown-banner');
-        if (_cb) _cb.style.display = 'none';
-        wlDetailCache = null;
-        wlPreEventCache = null;
-        wlComputedAsOf = null;
-        wlCalibrationBeta = 0.982;
-        watchListDirty = true;
-
-        // Destroy chart instances so old data doesn't show on cleared canvases
-        if (teamChartInstance) { teamChartInstance.destroy(); teamChartInstance = null; }
-        if (tbaChartInstance) { tbaChartInstance.destroy(); tbaChartInstance = null; }
-        if (matchInfluenceChartInstance) { matchInfluenceChartInstance.destroy(); matchInfluenceChartInstance = null; }
-        if (dashboardChartInstance) { dashboardChartInstance.destroy(); dashboardChartInstance = null; }
 
         await displayTeams();
         await displayTBATeams();
@@ -6121,13 +6148,14 @@ window.displayScoutingTeams = async function () {
 let currentScoutingSubTab = 'teams';
 window.switchScoutingSubTab = function (tab) {
     currentScoutingSubTab = tab;
-    ['teams', 'curation'].forEach(t => {
+    ['teams', 'curation', 'notes'].forEach(t => {
         document.getElementById(`scouting-subtab-${t}`).style.display = t === tab ? 'block' : 'none';
     });
     document.querySelectorAll('#scoutingSubTabs .detail-tab-btn').forEach((btn, i) => {
-        btn.classList.toggle('active', ['teams', 'curation'][i] === tab);
+        btn.classList.toggle('active', ['teams', 'curation', 'notes'][i] === tab);
     });
     if (tab === 'curation') renderCurationTab();
+    if (tab === 'notes') renderNotesTab();
 };
 
 async function renderCurationTab() {
@@ -6586,6 +6614,245 @@ async function renderCurationTab() {
 
     container.innerHTML = html;
 }
+
+// ─── NOTES TAB ────────────────────────────────────────────────────────────────
+
+function renderNotesTab() {
+    const container = document.getElementById('scouting-notes-content');
+    if (!container) return;
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    const showAll  = container.dataset.mode !== 'user';
+
+    // User-created team notes
+    const userNotes = [];
+    for (const [teamNum, map] of Object.entries(getTeamNotes())) {
+        for (const note of Object.values(map)) {
+            if (note.text) userNotes.push({ source: 'user', teamNumber: teamNum, matchNumber: note.qm, text: note.text });
+        }
+    }
+
+    // Standalone event notes (no team)
+    const eventNotes = _getEventNotes(eventKey).map(n => ({ source: 'event', teamNumber: null, matchNumber: null, ...n }));
+
+    // Scouting sheet comments (all-mode only)
+    const scoutNotes = [];
+    if (showAll && eventKey) {
+        const raw = localStorage.getItem(`scoutingData_${eventKey}`);
+        if (raw) {
+            const result = processScoutingData(eventKey, JSON.parse(raw), getScoutingColumnOverrides(eventKey));
+            if (result?.byTeam) {
+                for (const [tn, rows] of Object.entries(result.byTeam)) {
+                    for (const r of rows) {
+                        if (r.comments) scoutNotes.push({ source: 'scouting', teamNumber: tn, matchNumber: r.matchNumber, text: r.comments });
+                    }
+                }
+            }
+        }
+    }
+
+    const totalUser = userNotes.length + eventNotes.length;
+    const totalAll  = totalUser + scoutNotes.length;
+
+    // Group all notes by team; '__none__' = no team
+    const teamMap = new Map();
+    const addNote = (n) => {
+        const key = n.teamNumber != null ? String(n.teamNumber) : '__none__';
+        if (!teamMap.has(key)) teamMap.set(key, []);
+        teamMap.get(key).push(n);
+    };
+    userNotes.forEach(addNote);
+    scoutNotes.forEach(addNote);   // merged under same team in all-mode
+    eventNotes.forEach(addNote);   // goes to '__none__'
+
+    // Within each team: user notes first, then sheet, sorted by match number
+    for (const notes of teamMap.values()) {
+        notes.sort((a, b) => {
+            if (a.source !== b.source) return a.source === 'scouting' ? 1 : -1;
+            return (a.matchNumber ?? Infinity) - (b.matchNumber ?? Infinity);
+        });
+    }
+
+    // Teams sorted numerically; general notes last
+    const sortedKeys = [...teamMap.keys()].sort((a, b) => {
+        if (a === '__none__') return 1;
+        if (b === '__none__') return -1;
+        return Number(a) - Number(b);
+    });
+
+    const modeBtn = (mode, label, count) => {
+        const active = showAll === (mode === 'all');
+        return `<button onclick="setNotesMode('${mode}')" style="padding:6px 14px;border-radius:6px;border:1px solid ${active ? '#3b82f6' : '#334155'};background:${active ? '#1e3a5f' : 'transparent'};color:${active ? '#60a5fa' : '#64748b'};font-size:0.82em;cursor:pointer;">${label} <span style="color:${active ? '#93c5fd' : '#475569'};">(${count})</span></button>`;
+    };
+
+    // Row inside a team section — team already shown in header, so just match context
+    const noteRow = (n, i) => {
+        const matchLabel = n.matchNumber != null ? `QM ${n.matchNumber}` : (n.source !== 'scouting' ? 'General' : '');
+        const accent   = n.source === 'scouting' ? '#a78bfa' : '#60a5fa';
+        const teamArg  = n.teamNumber  != null ? `'${n.teamNumber}'`  : 'null';
+        const qmArg    = n.matchNumber != null ? n.matchNumber        : 'null';
+        const idArg    = n.id ? `'${n.id}'` : "''";
+        const editable = n.source !== 'scouting';
+        return `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:10px 14px;${i > 0 ? 'border-top:1px solid #0f172a;' : ''}">
+            <div style="min-width:0;flex:1;">
+                ${matchLabel ? `<span style="color:${accent};font-size:0.76em;font-weight:700;margin-right:8px;">${matchLabel}</span>` : ''}
+                <span style="color:#cbd5e1;font-size:0.88em;line-height:1.55;white-space:pre-wrap;word-break:break-word;">${n.text.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</span>
+            </div>
+            <div style="display:flex;gap:5px;flex-shrink:0;align-items:center;padding-top:1px;">
+                ${n.source === 'scouting' ? `<span style="color:#475569;font-size:0.72em;background:#0f172a;border-radius:4px;padding:2px 6px;">Sheet</span>` : ''}
+                ${editable
+                    ? `<button onclick="editNoteRow('${n.source}',${teamArg},${qmArg},${idArg})" style="background:#334155;color:#f8fafc;border:none;border-radius:6px;padding:3px 9px;font-size:0.76em;cursor:pointer;">Edit</button>
+                       <button onclick="deleteNoteRow('${n.source}',${teamArg},${qmArg},${idArg})" style="background:#7f1d1d;color:#fca5a5;border:none;border-radius:6px;padding:3px 9px;font-size:0.76em;cursor:pointer;">Del</button>`
+                    : ''}
+            </div>
+        </div>`;
+    };
+
+    const teamSection = (key, notes) => {
+        const isNone     = key === '__none__';
+        const label      = isNone ? 'General Notes' : `Team ${key}`;
+        const userCount  = notes.filter(n => n.source !== 'scouting').length;
+        const sheetCount = notes.filter(n => n.source === 'scouting').length;
+        const countStr   = sheetCount > 0 ? `${userCount} user · ${sheetCount} sheet` : `${notes.length} note${notes.length !== 1 ? 's' : ''}`;
+        return `<details class="notes-team-section" open style="background:#1e293b;border-radius:8px;margin-bottom:10px;border:1px solid #334155;overflow:hidden;">
+            <summary style="display:flex;align-items:center;justify-content:space-between;padding:9px 14px;background:#162032;border-bottom:1px solid #334155;user-select:none;">
+                <span style="color:#f1f5f9;font-weight:700;font-size:0.9em;">${label}</span>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="color:#475569;font-size:0.76em;">${countStr}</span>
+                    <span class="notes-chevron" style="color:#475569;font-size:0.8em;">▾</span>
+                </div>
+            </summary>
+            ${notes.map((n, i) => noteRow(n, i)).join('')}
+        </details>`;
+    };
+
+    const emptyState = `<div style="background:#1e293b;padding:20px 16px;border-radius:8px;border:1px dashed #334155;text-align:center;color:#475569;font-size:0.88em;">No notes yet. Use <strong style="color:#94a3b8;">+ Add Note</strong> to create one.</div>`;
+
+    const bulkBtns = sortedKeys.length > 1
+        ? `<div style="display:flex;gap:6px;">
+               <button onclick="expandAllNotes()" style="background:transparent;color:#64748b;border:1px solid #334155;border-radius:6px;padding:4px 10px;font-size:0.76em;cursor:pointer;">Expand all</button>
+               <button onclick="collapseAllNotes()" style="background:transparent;color:#64748b;border:1px solid #334155;border-radius:6px;padding:4px 10px;font-size:0.76em;cursor:pointer;">Collapse all</button>
+           </div>`
+        : '';
+
+    container.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
+            <button onclick="showNoteEditorModal()" style="background:#1e3a5f;color:#60a5fa;border:1px solid #3b82f6;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer;white-space:nowrap;">+ Add Note</button>
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                ${modeBtn('all',  'All Notes',  totalAll)}
+                ${modeBtn('user', 'User Notes', totalUser)}
+                ${bulkBtns}
+            </div>
+        </div>
+        ${sortedKeys.length ? sortedKeys.map(k => teamSection(k, teamMap.get(k))).join('') : emptyState}`;
+}
+
+window.collapseAllNotes = function () {
+    document.querySelectorAll('#scouting-notes-content .notes-team-section').forEach(d => d.removeAttribute('open'));
+};
+window.expandAllNotes = function () {
+    document.querySelectorAll('#scouting-notes-content .notes-team-section').forEach(d => d.setAttribute('open', ''));
+};
+
+window.setNotesMode = function (mode) {
+    const c = document.getElementById('scouting-notes-content');
+    if (c) c.dataset.mode = mode;
+    renderNotesTab();
+};
+
+window.showNoteEditorModal = function (opts = {}) {
+    document.getElementById('note-editor-overlay')?.remove();
+    const { teamNumber = '', matchNumber = '', text = '', source = 'user', id = null,
+            _origTeam = null, _origMatch = undefined } = opts;
+    const overlay = document.createElement('div');
+    overlay.id = 'note-editor-overlay';
+    overlay.dataset.origSource = source;
+    overlay.dataset.origTeam   = _origTeam  != null ? String(_origTeam)  : '';
+    overlay.dataset.origMatch  = _origMatch != null ? String(_origMatch) : '';
+    overlay.dataset.origId     = id || '';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;';
+    overlay.innerHTML = `
+        <div style="background:#0f172a;border:1px solid #334155;border-radius:12px;padding:24px;width:100%;max-width:480px;box-sizing:border-box;">
+            <h3 style="color:#f8fafc;margin:0 0 16px;font-size:1.05rem;font-weight:700;">${id ? 'Edit Note' : 'New Note'}</h3>
+            <textarea id="note-modal-text" placeholder="Note text…" style="width:100%;min-height:90px;background:#1e293b;color:#f8fafc;border:1px solid #334155;border-radius:6px;padding:10px;font-size:0.9rem;resize:vertical;box-sizing:border-box;font-family:inherit;">${String(text).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</textarea>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
+                <label style="display:flex;flex-direction:column;gap:4px;">
+                    <span style="color:#64748b;font-size:0.78em;">Team # <span style="color:#475569;">(optional)</span></span>
+                    <input id="note-modal-team" type="text" value="${teamNumber}" placeholder="e.g. 1768" style="background:#1e293b;color:#f8fafc;border:1px solid #334155;border-radius:6px;padding:8px;font-size:0.9rem;box-sizing:border-box;">
+                </label>
+                <label style="display:flex;flex-direction:column;gap:4px;">
+                    <span style="color:#64748b;font-size:0.78em;">Match # <span style="color:#475569;">(optional)</span></span>
+                    <input id="note-modal-match" type="number" value="${matchNumber}" placeholder="e.g. 5" min="1" style="background:#1e293b;color:#f8fafc;border:1px solid #334155;border-radius:6px;padding:8px;font-size:0.9rem;box-sizing:border-box;">
+                </label>
+            </div>
+            <p style="color:#475569;font-size:0.76em;margin:10px 0 0;">Notes tied to a team appear on that team’s detail page.</p>
+            <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end;">
+                <button onclick="document.getElementById('note-editor-overlay').remove()" style="background:#334155;color:#f8fafc;border:none;border-radius:6px;padding:8px 18px;cursor:pointer;font-size:0.88rem;">Cancel</button>
+                <button onclick="_saveNoteFromModal()" style="background:#3b82f6;color:#f8fafc;border:none;border-radius:6px;padding:8px 18px;font-weight:700;cursor:pointer;font-size:0.88rem;">Save Note</button>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+    document.getElementById('note-modal-text')?.focus();
+};
+
+window._saveNoteFromModal = function () {
+    const overlay = document.getElementById('note-editor-overlay');
+    if (!overlay) return;
+    const origSource = overlay.dataset.origSource;
+    const origTeam   = overlay.dataset.origTeam;
+    const origMatch  = overlay.dataset.origMatch;
+    const origId     = overlay.dataset.origId;
+
+    const text = document.getElementById('note-modal-text')?.value.trim() || '';
+    if (!text) { alert('Note text cannot be empty.'); return; }
+    const teamNum  = document.getElementById('note-modal-team')?.value.trim() || '';
+    const matchRaw = document.getElementById('note-modal-match')?.value.trim();
+    const qm       = matchRaw ? (parseInt(matchRaw, 10) || null) : null;
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+
+    // Delete old note when editing (handles team/match context changes)
+    if (origTeam && origSource === 'user') {
+        saveTeamNote(origTeam, '', origMatch ? parseInt(origMatch, 10) : null);
+    } else if (origId && origSource === 'event') {
+        _deleteEventNote(origId, eventKey);
+    }
+
+    if (teamNum) {
+        saveTeamNote(teamNum, text, qm);
+    } else {
+        _saveEventNote({ id: origId || String(Date.now()), text, timestamp: Date.now() }, eventKey);
+    }
+
+    overlay.remove();
+    renderNotesTab();
+};
+
+window.editNoteRow = function (source, teamNumber, matchNumber, id) {
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    let text = '';
+    if (source === 'user') {
+        text = getTeamNote(teamNumber, matchNumber)?.text || '';
+    } else if (source === 'event') {
+        text = _getEventNotes(eventKey).find(n => n.id === id)?.text || '';
+    }
+    window.showNoteEditorModal({
+        teamNumber:  teamNumber  != null ? String(teamNumber)  : '',
+        matchNumber: matchNumber != null ? String(matchNumber) : '',
+        text, source, id: id || null,
+        _origTeam:  teamNumber,
+        _origMatch: matchNumber,
+    });
+};
+
+window.deleteNoteRow = function (source, teamNumber, matchNumber, id) {
+    if (!confirm('Delete this note?')) return;
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    if (source === 'user') {
+        saveTeamNote(String(teamNumber), '', matchNumber != null ? matchNumber : null);
+    } else if (source === 'event') {
+        _deleteEventNote(id, eventKey);
+    }
+    renderNotesTab();
+};
 
 // ─── TOOLS TAB ──────────────────────────────────────────────────────────────
 
