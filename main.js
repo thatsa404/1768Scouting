@@ -18,8 +18,9 @@ db.version(2).stores({
 window.db = db;
 
 // 2. CONFIG & API KEYS
-const TBA_BASE = 'https://www.thebluealliance.com/api/v3';
-const TBA_KEY = import.meta.env.VITE_TBA_KEY;
+const TBA_BASE   = 'https://www.thebluealliance.com/api/v3';
+const TBA_KEY    = import.meta.env.VITE_TBA_KEY;
+const NEXUS_KEY  = import.meta.env.VITE_NEXUS_KEY || '';
 const _tbaCache = new Map(); // endpoint → { etag, data }
 let _tbaGotFreshData = false;  // reset per _runTBASyncs cycle
 let _tbaLastFreshMs  = null;   // timestamp of last non-304 TBA response
@@ -216,6 +217,25 @@ window.saveNexusUrl = function () {
 function initNexusIntegration() {
     updateNexusUI();
     if (isNexusEnabled() && getNexusUrl()) startNexusPolling();
+}
+
+// ── Nexus REST API ─────────────────────────────────────────────────────────────
+// Direct pull (not webhook) — fetches full event status including all matches.
+
+async function fetchNexusLiveStatus(eventKey) {
+    if (!NEXUS_KEY || !eventKey) return null;
+    try {
+        const resp = await fetch(`https://frc.nexus/api/v1/event/${eventKey}`, {
+            headers: { 'Nexus-Api-Key': NEXUS_KEY },
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        localStorage.setItem(`nexusEventData_${eventKey}`, JSON.stringify({ data, ts: Date.now() }));
+        return data;
+    } catch (e) {
+        console.warn('[Nexus] fetchLiveStatus failed:', e.message);
+        return null;
+    }
 }
 
 function updateAppEventKey(eventKey) {
@@ -541,7 +561,8 @@ window.displaySchedule = async function () {
     const body = document.getElementById('scheduleBody');
     if (!body) return;
 
-    const matches = await db.matches.orderBy('matchNumber').toArray();
+    const matches = (await db.matches.orderBy('matchNumber').toArray())
+        .filter(m => !m.compLevel || m.compLevel === 'qm');
     const isMobile = document.body.classList.contains('mobile-ui');
     const thead = document.querySelector('#scheduleTable thead');
 
@@ -1993,6 +2014,7 @@ let _autoSyncCountdown = 0;
 let _statboticsJitterTimer  = null;  // one-shot setTimeout
 let _statboticsJitterFireAt = null;  // epoch ms when it will fire
 let _statboticsLastMs       = null;  // epoch ms of last completed syncStatboticsLive
+let _localEpaLastMs         = null;  // epoch ms of last completed computeLocalEPA
 
 function _scheduleJitteredStatbotics() {
     if (_statboticsJitterTimer) return; // already pending
@@ -2026,11 +2048,15 @@ function _updateSyncDataStatus() {
         parts.push(`TBA update: ${_fmtAgo(now - _tbaLastFreshMs)}`);
     }
 
-    if (_statboticsJitterFireAt) {
-        const inMin = Math.ceil(Math.max(0, _statboticsJitterFireAt - now) / 60_000);
-        parts.push(`Statbotics: updating in ~${inMin}m`);
-    } else if (_statboticsLastMs) {
-        parts.push(`Statbotics: ${_fmtAgo(now - _statboticsLastMs)}`);
+    if (isLocalEpaEnabled()) {
+        if (_localEpaLastMs) parts.push(`Local EPA: ${_fmtAgo(now - _localEpaLastMs)}`);
+    } else {
+        if (_statboticsJitterFireAt) {
+            const inMin = Math.ceil(Math.max(0, _statboticsJitterFireAt - now) / 60_000);
+            parts.push(`Statbotics: updating in ~${inMin}m`);
+        } else if (_statboticsLastMs) {
+            parts.push(`Statbotics: ${_fmtAgo(now - _statboticsLastMs)}`);
+        }
     }
 
     el.textContent = parts.join('  ·  ');
@@ -2040,8 +2066,127 @@ async function _runTBASyncs() {
     _tbaGotFreshData = false;
     await window.syncTBAOPR();
     await window.syncTBAMatches();
-    if (_tbaGotFreshData) _scheduleJitteredStatbotics();
+    if (_tbaGotFreshData) {
+        if (isLocalEpaEnabled()) await computeLocalEPA();
+        else _scheduleJitteredStatbotics();
+    }
 }
+
+// ── Local EPA Engine ──────────────────────────────────────────────────────────
+// Replaces live Statbotics sync with client-side EPA computation when enabled.
+// Uses Statbotics' Kalman update: per match, each team on the alliance gets
+// Δ = K × (actual − predicted_alliance) / 3  where K decays as matches played.
+
+function isLocalEpaEnabled() { return localStorage.getItem('localEpaEnabled') === 'true'; }
+
+async function _capturePreEventEPA(teams) {
+    const updates = teams
+        .filter(t => t.preEventEPA == null && t.currentEPA != null)
+        .map(t => db.teams.update(t.teamNumber, {
+            preEventEPA:        t.currentEPA,
+            preEventAutoEPA:    t.autoEPA    ?? null,
+            preEventTeleopEPA:  t.teleopEPA  ?? null,
+            preEventEndgameEPA: t.endgameEPA ?? null,
+        }));
+    await Promise.all(updates);
+}
+
+async function computeLocalEPA() {
+    const [teams, matches] = await Promise.all([db.teams.toArray(), db.matches.toArray()]);
+    if (!teams.length) return;
+
+    // Start from pre-event baseline (captured at first enable) or existing EPA
+    const epaState = {};
+    for (const t of teams) {
+        epaState[t.teamNumber] = {
+            current:  t.preEventEPA        ?? t.currentEPA  ?? 0,
+            auto:     t.preEventAutoEPA     ?? t.autoEPA     ?? 0,
+            endgame:  t.preEventEndgameEPA  ?? t.endgameEPA  ?? 0,
+            n: 0,
+        };
+    }
+    const getE = tn => epaState[tn] || (epaState[tn] = { current: 0, auto: 0, endgame: 0, n: 0 });
+
+    const played = matches
+        .filter(m => (m.redScore ?? -1) >= 0 && (m.blueScore ?? -1) >= 0)
+        .sort((a, b) => (a.actualTime || a.predictedTime || 0) - (b.actualTime || b.predictedTime || 0));
+
+    for (const m of played) {
+        for (const [alliance, score, bd] of [
+            [m.red  || [], m.redScore,  m.redBreakdown],
+            [m.blue || [], m.blueScore, m.blueBreakdown],
+        ]) {
+            const members = alliance.map(t => String(t).replace(/^frc/i, ''));
+            if (!members.length) continue;
+
+            const predTotal   = members.reduce((s, t) => s + getE(t).current, 0);
+            const predAuto    = members.reduce((s, t) => s + getE(t).auto,    0);
+            const predEndgame = members.reduce((s, t) => s + getE(t).endgame, 0);
+            const autoActual    = bd?.totalAutoPoints ?? null;
+            const endgameActual = bd ? ((bd.endGameTowerPoints || 0) + (bd['Hub Endgame Fuel Count'] || 0)) : null;
+            const N = members.length || 1;
+
+            for (const t of members) {
+                const e = getE(t);
+                e.n++;
+                const K = e.n <= 6 ? 0.5 : e.n <= 12 ? 0.5 - (e.n - 6) / 30 : 0.3;
+                e.current += K * (score - predTotal)   / N;
+                if (autoActual    != null) e.auto    += K * (autoActual    - predAuto)    / N;
+                if (endgameActual != null) e.endgame += K * (endgameActual - predEndgame) / N;
+            }
+        }
+    }
+
+    await Promise.all(teams.map(t => {
+        const e = epaState[t.teamNumber];
+        if (!e || e.n === 0) return null;
+        return db.teams.update(t.teamNumber, {
+            currentEPA: e.current,
+            autoEPA:    e.auto,
+            teleopEPA:  e.current - e.auto - e.endgame,
+            endgameEPA: e.endgame,
+        });
+    }).filter(Boolean));
+
+    _localEpaLastMs = Date.now();
+    _updateSyncDataStatus();
+    displayTeams();
+    await renderAtAGlance();
+}
+
+function updateLocalEpaUI() {
+    const btn   = document.getElementById('localEpaBtn');
+    const label = document.getElementById('localEpaLabel');
+    const enabled = isLocalEpaEnabled();
+    if (btn)   btn.textContent   = enabled ? '✅' : '⬜';
+    if (label) label.textContent = enabled ? 'On' : 'Off';
+}
+
+window.toggleLocalEpa = async function () {
+    const enabling = !isLocalEpaEnabled();
+    localStorage.setItem('localEpaEnabled', String(enabling));
+    updateLocalEpaUI();
+    _updateSyncDataStatus();
+
+    if (enabling) {
+        const teams = await db.teams.toArray();
+        await _capturePreEventEPA(teams);
+        await computeLocalEPA();
+    } else {
+        // Restore pre-event Statbotics baseline
+        const teams = await db.teams.toArray();
+        await Promise.all(teams
+            .filter(t => t.preEventEPA != null)
+            .map(t => db.teams.update(t.teamNumber, {
+                currentEPA: t.preEventEPA,
+                autoEPA:    t.preEventAutoEPA    ?? t.autoEPA,
+                teleopEPA:  t.preEventTeleopEPA  ?? t.teleopEPA,
+                endgameEPA: t.preEventEndgameEPA ?? t.endgameEPA,
+            })));
+        displayTeams();
+        await renderAtAGlance();
+    }
+};
 
 function _updateAutoSyncStatus() {
     const el = document.getElementById('autoSyncStatus');
@@ -2072,13 +2217,15 @@ window.toggleAutoSync = function () {
         const totalSeconds = minutes * 60;
         _autoSyncCountdown = totalSeconds;
 
-        // TBA immediately; schedules jitter if fresh data comes back
+        // TBA immediately; if fresh data comes back, triggers local EPA or jittered Statbotics
         _runTBASyncs();
-        // Statbotics baseline run immediately; subsequent runs are TBA-triggered
-        window.syncStatboticsLive().then(() => {
-            _statboticsLastMs = Date.now();
-            _updateSyncDataStatus();
-        });
+        // Statbotics baseline — skipped when local EPA mode is active
+        if (!isLocalEpaEnabled()) {
+            window.syncStatboticsLive().then(() => {
+                _statboticsLastMs = Date.now();
+                _updateSyncDataStatus();
+            });
+        }
 
         _autoSyncTimer = setInterval(() => {
             _autoSyncCountdown = totalSeconds;
@@ -3439,20 +3586,18 @@ window.syncTBAMatches = async function () {
         const matches = await fetchTBA(`/event/${eventKey}/matches`);
         if (!Array.isArray(matches)) throw new Error("Invalid match data from TBA.");
 
-        const qualMatches = matches
-            .filter(m => m.comp_level === 'qm')
-            .sort((a, b) => a.match_number - b.match_number);
-
         // Snapshot already-scored matches before overwriting, for new-score notifications
         const scoredBefore = new Set(
             (await db.matches.where('eventKey').equals(eventKey).toArray())
                 .filter(m => m.redScore > -1).map(m => m.key)
         );
 
-        const records = qualMatches.map(m => ({
+        const records = matches.map(m => ({
             key: m.key,
             eventKey,
+            compLevel: m.comp_level,
             matchNumber: m.match_number,
+            setNumber: m.set_number ?? null,
             red: (m.alliances?.red?.team_keys || []).map(k => k.replace('frc', '')),
             blue: (m.alliances?.blue?.team_keys || []).map(k => k.replace('frc', '')),
             redScore: m.alliances?.red?.score ?? -1,
@@ -3490,7 +3635,9 @@ window.syncTBAMatches = async function () {
 
         setSyncTimestamp('tbaMatches');
         watchListDirty = true;
-        statusDiv.innerText = `✅ TBA Matches synced (${records.length} qual matches).`;
+        const qualCount = records.filter(r => r.compLevel === 'qm').length;
+        const playoffCount = records.length - qualCount;
+        statusDiv.innerText = `✅ TBA Matches synced (${qualCount} qual${playoffCount ? `, ${playoffCount} playoff` : ''}).`;
         displaySchedule();
         maybeAutoActivateNexus();
 
@@ -3503,6 +3650,7 @@ window.syncTBAMatches = async function () {
         statusDiv.innerText = `❌ TBA Matches Sync Failed: ${err.message}`;
     }
 };
+
 
 
 // ─── TBA CHART & TABLE ───────────────────────────────────────────────────────
@@ -3661,14 +3809,15 @@ let glanceSortColumn = 'rp';
 let glanceSortOrder = 1; // 1 = descending
 
 window.switchHomeTab = function (tab) {
-    ['setup', 'overview'].forEach(t => {
+    ['setup', 'overview', 'stream'].forEach(t => {
         const display = t === tab ? (t === 'setup' ? 'grid' : 'block') : 'none';
         document.getElementById(`home-tab-${t}`).style.display = display;
     });
     document.querySelectorAll('#homeTabs .detail-tab-btn').forEach((btn, i) => {
-        btn.classList.toggle('active', ['setup', 'overview'][i] === tab);
+        btn.classList.toggle('active', ['setup', 'overview', 'stream'][i] === tab);
     });
     if (tab === 'overview') renderAtAGlance();
+    if (tab === 'stream')   renderStreamsTab();
 };
 
 window.sortGlanceBy = function (col) {
@@ -4412,19 +4561,19 @@ let wlComputedAsOf = null; // label shown in banner, e.g. "Q12" or null for pre-
 let wlCalibrationBeta = 0.982;
 
 window.switchScheduleTab = function (tab) {
-    ['matches', 'watchlist', 'streams'].forEach(t => {
+    ['matches', 'watchlist', 'bracket'].forEach(t => {
         document.getElementById(`schedule-sub-${t}`).style.display = t === tab ? '' : 'none';
     });
     document.querySelectorAll('#scheduleTabs .detail-tab-btn').forEach((btn, i) => {
-        btn.classList.toggle('active', ['matches', 'watchlist', 'streams'][i] === tab);
+        btn.classList.toggle('active', ['matches', 'watchlist', 'bracket'][i] === tab);
     });
     if (tab === 'watchlist' && watchListDirty) showWatchListStale();
-    if (tab === 'streams') renderStreamsTab();
+    if (tab === 'bracket')  renderBracketTab();
 };
 
 function renderStreamsTab() {
     const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
-    const container = document.getElementById('schedule-sub-streams');
+    const container = document.getElementById('home-tab-stream');
     if (!container) return;
 
     let webcasts = [];
@@ -4453,6 +4602,407 @@ function renderStreamsTab() {
             </div>
         </div>`;
     }).join('');
+}
+
+// ── BRACKET TAB ──────────────────────────────────────────────────────────────
+
+window.saveNexusEventKeyOverride = function () {
+    const val = document.getElementById('nexusEventKeyOverride')?.value.trim().toLowerCase() || '';
+    if (val) localStorage.setItem('nexusEventKeyOverride', val);
+    else localStorage.removeItem('nexusEventKeyOverride');
+};
+
+function getNexusEventKey() {
+    return localStorage.getItem('nexusEventKeyOverride')?.trim().toLowerCase()
+        || document.getElementById('eventKeyInput')?.value.trim().toLowerCase()
+        || '';
+}
+
+let _bracketMode = localStorage.getItem('bracketMode') || 'bracket';
+
+window.setBracketMode = function (mode) {
+    _bracketMode = mode;
+    localStorage.setItem('bracketMode', mode);
+    document.getElementById('bracketViewBtn')?.classList.toggle('active', mode === 'bracket');
+    document.getElementById('bracketListBtn')?.classList.toggle('active', mode === 'list');
+    window.renderBracketTab();
+};
+
+// FRC double-elimination bracket: match number → {round, upper/lower}
+// Official FRC numbering: M1-M4 upper R1, M5-M6 lower R2, M7-M8 upper R2,
+// M9-M10 lower R3, M11 lower R4, M12 upper final (R4), M13 lower final (R5), M14-M15 grand finals
+const _FRC_BRACKET = {
+    1:  { col:0, row:0, label:'Match 1',  upper:true  },
+    2:  { col:0, row:2, label:'Match 2',  upper:true  },
+    3:  { col:0, row:4, label:'Match 3',  upper:true  },
+    4:  { col:0, row:6, label:'Match 4',  upper:true  },
+    5:  { col:1, row:1, label:'Match 5',  upper:false },
+    6:  { col:1, row:5, label:'Match 6',  upper:false },
+    7:  { col:1, row:0, label:'Match 7',  upper:true  },
+    8:  { col:1, row:4, label:'Match 8',  upper:true  },
+    9:  { col:2, row:2, label:'Match 9',  upper:false },
+    10: { col:2, row:4, label:'Match 10', upper:false },
+    11: { col:3, row:3, label:'Match 11', upper:false },
+    12: { col:3, row:1, label:'Match 12', upper:true  },
+    13: { col:4, row:2, label:'Match 13', upper:false },
+    14: { col:5, row:2, label:'F1',  upper:null  },
+    15: { col:5, row:3, label:'F2',  upper:null  },
+};
+
+window.renderBracketTab = async function () {
+    const container = document.getElementById('bracket-content');
+    if (!container) return;
+
+    // Sync override input state
+    const savedOverride = localStorage.getItem('nexusEventKeyOverride') || '';
+    const overrideInput = document.getElementById('nexusEventKeyOverride');
+    if (overrideInput && !overrideInput.value && savedOverride) overrideInput.value = savedOverride;
+
+    // Sync mode buttons
+    document.getElementById('bracketViewBtn')?.classList.toggle('active', _bracketMode === 'bracket');
+    document.getElementById('bracketListBtn')?.classList.toggle('active', _bracketMode === 'list');
+
+    const tbaKey   = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    const nexusKey = getNexusEventKey();
+
+    if (!tbaKey) {
+        container.innerHTML = `<p style="color:#64748b;font-style:italic;text-align:center;margin-top:32px;">No event selected.</p>`;
+        return;
+    }
+
+    container.innerHTML = `<p style="color:#64748b;text-align:center;margin-top:32px;">Loading…</p>`;
+
+    const tbaMatches = await db.matches.toArray();
+
+    // Convert a TBA match key to bracket match number (1-15).
+    // 2023+ double-elim: sf{N}m1 → N (set_number = bracket match), f1m1 → 14, f1m2 → 15
+    // Also supports p{N} canonical format used by some TBA responses.
+    function _tbaKeyToBracketNum(key) {
+        const suffix = key?.replace(`${tbaKey}_`, '');
+        if (!suffix) return null;
+        if (suffix.startsWith('p')) { const n = parseInt(suffix.slice(1)); return isNaN(n) ? null : n; }
+        const sf = suffix.match(/^sf(\d+)m\d+$/);
+        if (sf) return parseInt(sf[1]);
+        const f = suffix.match(/^f\d+m(\d+)$/);
+        if (f) return 13 + parseInt(f[1]);
+        return null;
+    }
+
+    // Build TBA score lookup: bracket match number → match record
+    const tbaScoreMap = {};
+    for (const m of tbaMatches) {
+        const n = _tbaKeyToBracketNum(m.key);
+        if (n != null) tbaScoreMap[n] = m;
+    }
+
+    // Try Nexus
+    let nexusData = null;
+    if (NEXUS_KEY) nexusData = await fetchNexusLiveStatus(nexusKey);
+
+    // Build unified match list from Nexus (with TBA score enrichment) or pure TBA
+    let matchEntries = []; // { n, label, redTeams, blueTeams, status, redScore, blueScore, isQueuing, isDone }
+    let nowQueuing = null;
+    let dataSource = 'tba';
+
+    if (nexusData) {
+        dataSource = 'nexus';
+        nowQueuing = nexusData.nowQueuing || null;
+        const nexusPlayoff = (nexusData.matches || []).filter(m => /^playoff\s*\d+/i.test(m.label || ''));
+        for (const m of nexusPlayoff) {
+            const n = parseInt((m.label || '').match(/\d+/)?.[0] || '0');
+            const tba = tbaScoreMap[n] ?? null;
+            matchEntries.push({
+                n, label: m.label,
+                redTeams:  m.redTeams  || [],
+                blueTeams: m.blueTeams || [],
+                status: m.status || '',
+                redScore:  tba?.redScore  ?? null,
+                blueScore: tba?.blueScore ?? null,
+                isQueuing: m.label === nowQueuing,
+                isDone: /complet|result/i.test(m.status || ''),
+                isFinals: n >= 14,
+            });
+        }
+    }
+
+    // Fall through to TBA-only if Nexus failed or returned no playoff matches
+    if (!matchEntries.length) {
+        dataSource = 'tba';
+        const sfM = tbaMatches.filter(m => m.compLevel === 'sf' && (m.setNumber ?? 0) > 0);
+        const fM  = tbaMatches.filter(m => m.compLevel === 'f');
+        // Finals are numbered after the last bracket match, not hardcoded at 13+
+        const maxSfN = sfM.length ? Math.max(...sfM.map(m => m.setNumber)) : 13;
+        for (const m of [...sfM, ...fM]) {
+            const n = m.compLevel === 'f'
+                ? maxSfN + (m.matchNumber ?? 1)
+                : (m.setNumber ?? _tbaKeyToBracketNum(m.key));
+            if (n == null) continue;
+            matchEntries.push({
+                n, label: `Playoff ${n}`,
+                redTeams:  (m.red  || []).map(t => String(t).replace(/^frc/i,'')),
+                blueTeams: (m.blue || []).map(t => String(t).replace(/^frc/i,'')),
+                status: (m.redScore ?? -1) >= 0 ? 'Completed' : '',
+                redScore:  m.redScore  ?? null,
+                blueScore: m.blueScore ?? null,
+                isQueuing: false,
+                isDone: (m.redScore ?? -1) >= 0,
+                isFinals: m.compLevel === 'f',
+            });
+        }
+    }
+
+    if (!matchEntries.length) {
+        const nexusMsg = !NEXUS_KEY
+            ? `No Nexus API key — configure <code>VITE_NEXUS_KEY</code>.`
+            : nexusData
+                ? `No playoff matches from Nexus yet.`
+                : `Nexus unreachable (check key / network).`;
+        container.innerHTML = `
+            <div style="text-align:center;margin-top:32px;color:#64748b;">
+                <p>${nexusMsg}</p>
+                <p style="font-size:0.85em;margin-top:6px;">No TBA playoff matches synced either. Sync TBA Matches once playoffs begin.</p>
+            </div>`;
+        return;
+    }
+
+    matchEntries.sort((a, b) => a.n - b.n);
+    const matchMap = Object.fromEntries(matchEntries.map(e => [e.n, e]));
+
+    // Non-standard bracket: any bracket match numbered above 13 (e.g. > 8 alliances)
+    const isNonStandard = matchEntries.some(e => !e.isFinals && e.n > 13);
+    const bracketViewBtn = document.getElementById('bracketViewBtn');
+    const bracketListBtn = document.getElementById('bracketListBtn');
+    if (bracketViewBtn) bracketViewBtn.style.display = isNonStandard ? 'none' : '';
+    if (bracketListBtn) bracketListBtn.style.display = isNonStandard ? 'none' : '';
+
+    const nexusKeyNote = dataSource === 'nexus' && nexusKey !== tbaKey ? ` · Nexus key: ${nexusKey}` : '';
+
+    const effectiveMode = isNonStandard ? 'list' : _bracketMode;
+
+    if (nowQueuing) {
+        container.innerHTML = `<div style="background:#14532d;border:1px solid #16a34a;border-radius:6px;padding:7px 12px;margin-bottom:12px;color:#86efac;font-size:0.88em;">Now queuing: <strong>${nowQueuing}</strong></div>`;
+    } else {
+        container.innerHTML = '';
+    }
+
+    if (effectiveMode === 'list') {
+        _renderBracketList(container, matchEntries, nowQueuing, nexusKeyNote, dataSource, isNonStandard);
+    } else {
+        _renderBracketVisual(container, matchMap, nowQueuing, nexusKeyNote, dataSource);
+    }
+};
+
+// ── List mode ────────────────────────────────────────────────────────────────
+function _renderBracketList(container, entries, nowQueuing, nexusKeyNote, dataSource, isNonStandard) {
+    const ROUND_LABEL = {
+        1:'Upper R1', 2:'Upper R1', 3:'Upper R1', 4:'Upper R1',
+        5:'Lower R2', 6:'Lower R2', 7:'Upper R2', 8:'Upper R2',
+        9:'Lower R3', 10:'Lower R3', 11:'Upper Final', 12:'Lower R4',
+        13:'Lower Final',
+    };
+
+    const isMobile = document.body.classList.contains('mobile-ui');
+
+    const maxNonFinalsN = entries.filter(e => !e.isFinals).reduce((acc, e) => Math.max(acc, e.n), 0);
+    const matchLabel = e => e.isFinals ? `F${e.n - maxNonFinalsN}` : `M${e.n}`;
+
+    const maxTeams = Math.max(3, ...entries.flatMap(e => [(e.redTeams||[]).length, (e.blueTeams||[]).length]));
+
+    const teamCell = (team, cls, shrink) => {
+        const t = String(team).replace(/^frc/i, '');
+        const sz = shrink ? 'font-size:0.8em;padding:2px 3px;' : '';
+        return `<td class="${cls}" onclick="highlightTeam('${t}')" style="cursor:pointer;${sz}"><strong>${t}</strong></td>`;
+    };
+
+    const allianceCells = (teams, cls, shrink) => {
+        const cells = teams.map(t => teamCell(t, cls, shrink));
+        for (let i = teams.length; i < maxTeams; i++) cells.push(`<td class="${cls}"></td>`);
+        return cells.join('');
+    };
+
+    const nonStandardNote = isNonStandard
+        ? `<div style="background:#1e1b4b;border:1px solid #4338ca;border-radius:5px;padding:7px 11px;margin-bottom:10px;font-size:0.82em;color:#a5b4fc;">Non-standard bracket — visual view unavailable.</div>`
+        : '';
+
+    let html = `${nonStandardNote}<div style="font-size:0.78em;color:#475569;margin-bottom:10px;">Source: ${dataSource === 'nexus' ? 'Nexus' : 'TBA'}${nexusKeyNote}</div>`;
+
+    const colSpan = isMobile ? maxTeams + 2 : maxTeams * 2 + 2;
+    const numCols = Array.from({length: maxTeams}, (_, i) => i + 1);
+    if (isMobile) {
+        html += `<table style="width:100%;border-collapse:collapse;">
+            <thead><tr>
+                <th style="text-align:center;">Match</th>
+                ${numCols.map(i => `<th>${i}</th>`).join('')}
+                <th style="text-align:center;min-width:3.2rem;">Score</th>
+            </tr></thead><tbody>`;
+    } else {
+        html += `<table style="width:100%;border-collapse:collapse;">
+            <thead>
+            <tr>
+                <th rowspan="2">Match</th>
+                <th colspan="${maxTeams}" class="red-header">Red Alliance</th>
+                <th colspan="${maxTeams}" class="blue-header">Blue Alliance</th>
+                <th rowspan="2">Result</th>
+            </tr><tr>
+                ${numCols.map(i => `<th class="red-header">${i}</th>`).join('')}
+                ${numCols.map(i => `<th class="blue-header">${i}</th>`).join('')}
+            </tr>
+            </thead><tbody>`;
+    }
+
+    let lastRound = null;
+    for (const e of entries) {
+        const rLabel = isNonStandard ? null
+            : (e.isFinals || e.n > 13) ? 'Finals'
+            : (ROUND_LABEL[e.n] || `Playoff ${e.n}`);
+        if (rLabel !== null && rLabel !== lastRound) {
+            html += `<tr><td colspan="${colSpan}" style="font-size:0.72em;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#475569;padding:10px 4px 4px;border-bottom:1px solid #1e293b;">${rLabel}</td></tr>`;
+            lastRound = rLabel;
+        }
+
+        const lbl = matchLabel(e);
+        const { redTeams, blueTeams, redScore, blueScore, isQueuing, isDone } = e;
+        const red  = redTeams  || [];
+        const blue = blueTeams || [];
+        const redWon  = redScore != null && blueScore != null && redScore  > blueScore;
+        const blueWon = redScore != null && blueScore != null && blueScore > redScore;
+        const scored  = redScore != null && redScore >= 0;
+        const shrink  = Math.max(red.length, blue.length) > 3;
+
+        const queuingBadge = isQueuing
+            ? `<span style="background:#14532d;color:#86efac;border-radius:3px;padding:1px 4px;font-size:0.65em;font-weight:700;margin-left:4px;">▶</span>`
+            : '';
+
+        const redCells  = allianceCells(red,  'red-cell',  shrink);
+        const blueCells = allianceCells(blue, 'blue-cell', shrink);
+
+        if (isMobile) {
+            const scoreCell = scored
+                ? `<td rowspan="2" style="border-left:2px solid #334155;vertical-align:middle;text-align:center;white-space:nowrap;padding:4px 8px;">
+                       <div style="color:${redWon?'#4ade80':'#94a3b8'};font-weight:${redWon?'800':'normal'}">${redScore}</div>
+                       <div style="color:#334155;font-size:0.65em;">·</div>
+                       <div style="color:${blueWon?'#4ade80':'#94a3b8'};font-weight:${blueWon?'800':'normal'}">${blueScore}</div>
+                   </td>`
+                : `<td rowspan="2" style="color:#64748b;font-style:italic;border-left:2px solid #334155;vertical-align:middle;text-align:center;">—</td>`;
+            html += `<tr>
+                <td class="match-number" rowspan="2" style="color:#3b82f6;font-weight:700;vertical-align:middle;text-align:center;white-space:nowrap;padding:4px 6px;">${lbl}${queuingBadge}</td>
+                ${redCells}${scoreCell}
+            </tr><tr>${blueCells}</tr>`;
+        } else {
+            const resultCell = scored
+                ? `<td style="border-left:2px solid #334155;white-space:nowrap;">
+                       <span style="color:${redWon?'#4ade80':'#94a3b8'};font-weight:${redWon?'bold':'normal'}">${redScore}</span>
+                       <span style="color:#475569;"> – </span>
+                       <span style="color:${blueWon?'#4ade80':'#94a3b8'};font-weight:${blueWon?'bold':'normal'}">${blueScore}</span>
+                   </td>`
+                : `<td style="color:#64748b;font-style:italic;border-left:2px solid #334155;">Upcoming</td>`;
+            html += `<tr>
+                <td class="match-number" style="color:#3b82f6;font-weight:700;white-space:nowrap;">${lbl}${queuingBadge}</td>
+                ${redCells}${blueCells}${resultCell}
+            </tr>`;
+        }
+    }
+
+    html += `</tbody></table>`;
+    container.insertAdjacentHTML('beforeend', html);
+}
+
+// ── Visual bracket mode ───────────────────────────────────────────────────────
+function _renderBracketVisual(container, matchMap, nowQueuing, nexusKeyNote, dataSource) {
+    // 6 columns: R1, R2, R3, R4, R5, Finals
+    const COL_HEADERS = ['Round 1', 'Round 2', 'Round 3', 'Round 4', 'Round 5', 'Finals'];
+    // Each column lists match numbers in top-to-bottom display order
+    // Upper bracket on top, lower bracket below, with spacing
+    const COLS = [
+        [1, 2, null, 3, 4],                    // R1: M1,M2 | gap | M3,M4
+        [7, 5, null, null, 8, 6],              // R2: M7(upper),M5(lower) | gap | M8(upper),M6(lower)
+        [11, null, 9, 10],                      // R3: M11(upper final) | gap | M9,M10(lower)
+        [null, 12],                             // R4: gap(upper) | M12(lower R4)
+        [null, null, 13],                       // R5: M13
+        [null, 14, 15],                         // Finals
+    ];
+
+    let html = `<div style="font-size:0.78em;color:#475569;margin-bottom:10px;">Source: ${dataSource === 'nexus' ? 'Nexus' : 'TBA'}${nexusKeyNote}</div><div class="bracket-view">`;
+
+    for (let ci = 0; ci < COLS.length; ci++) {
+        const col = COLS[ci];
+        html += `<div class="bracket-col">
+            <div class="bracket-col-header">${COL_HEADERS[ci]}</div>`;
+
+        for (const mn of col) {
+            if (mn === null) {
+                html += `<div class="bracket-slot spacer"></div>`;
+            } else {
+                const e = matchMap[mn] ?? null;
+                html += `<div class="bracket-slot">${_bracketCard(e, nowQueuing, 'visual', `Playoff ${mn}`)}</div>`;
+            }
+        }
+        html += `</div>`;
+
+        // Connector column between rounds (not after last)
+        if (ci < COLS.length - 1) {
+            html += `<div style="display:flex;flex-direction:column;width:16px;flex:0 0 16px;padding-top:38px;">`;
+            // Draw bracket arms aligned with the pairs that feed into the next column
+            // Upper bracket arms
+            if (ci === 0) {
+                // M1+M2 feed M7, M3+M4 feed M8
+                html += `<div style="flex:2;border-right:1px solid #334155;border-bottom:1px solid #334155;"></div>
+                          <div style="flex:2;border-right:1px solid #334155;border-top:1px solid #334155;"></div>
+                          <div style="flex:1;"></div>
+                          <div style="flex:2;border-right:1px solid #334155;border-bottom:1px solid #334155;"></div>
+                          <div style="flex:2;border-right:1px solid #334155;border-top:1px solid #334155;"></div>`;
+            } else {
+                html += `<div style="flex:1;"></div>`;
+            }
+            html += `</div>`;
+        }
+    }
+
+    html += `</div>`;
+    container.insertAdjacentHTML('beforeend', html);
+}
+
+// ── Shared card renderer ──────────────────────────────────────────────────────
+function _bracketCard(e, nowQueuing, mode, fallbackLabel) {
+    if (!e) {
+        // Placeholder for unplayed/unknown match
+        const lbl = fallbackLabel || 'TBD';
+        return mode === 'visual'
+            ? `<div class="bracket-card"><div class="bracket-card-label">${lbl}</div>
+               <div class="bracket-alliance red bracket-tbd">Red TBD</div>
+               <div class="bracket-alliance blue bracket-tbd">Blue TBD</div></div>`
+            : '';
+    }
+    const { label, redTeams, blueTeams, redScore, blueScore, isQueuing, isDone, status } = e;
+    const redWon  = redScore  != null && blueScore != null && redScore  > blueScore;
+    const blueWon = redScore  != null && blueScore != null && blueScore > redScore;
+
+    const teamList = (teams) => teams.length
+        ? teams.map(t => `<span onclick="highlightTeam('${t}')" style="cursor:pointer;text-decoration:underline dotted;">${t}</span>`).join(' ')
+        : '<span class="bracket-tbd">TBD</span>';
+
+    const scoreEl = (score) => score != null ? `<span class="bracket-score">${score}</span>` : '';
+    const redClass  = `bracket-alliance red${redWon?' winner':isDone?' loser':''}`;
+    const blueClass = `bracket-alliance blue${blueWon?' winner':isDone?' loser':''}`;
+
+    if (mode === 'visual') {
+        const cardClass = `bracket-card${isQueuing?' queuing':isDone?' done':''}`;
+        return `<div class="${cardClass}">
+            <div class="bracket-card-label">${label}${isQueuing ? ' <span style="color:#86efac;font-size:0.85em;">▶</span>' : ''}</div>
+            <div class="${redClass}">${teamList(redTeams)}${scoreEl(redScore)}</div>
+            <div class="${blueClass}">${teamList(blueTeams)}${scoreEl(blueScore)}</div>
+        </div>`;
+    }
+    // list mode card
+    const badge = isQueuing
+        ? `<span style="background:#14532d;color:#86efac;border-radius:3px;padding:1px 5px;font-size:0.7em;font-weight:700;margin-left:6px;">QUEUING</span>`
+        : isDone ? `<span style="background:#1e1b4b;color:#a5b4fc;border-radius:3px;padding:1px 5px;font-size:0.7em;margin-left:6px;">Done</span>`
+        : status ? `<span style="background:#1e293b;color:#94a3b8;border-radius:3px;padding:1px 5px;font-size:0.7em;margin-left:6px;">${status}</span>` : '';
+    return `<div style="background:#0f172a;border:1px solid ${isQueuing?'#16a34a':'#1e293b'};border-radius:5px;padding:9px 11px;margin-bottom:7px;max-width:320px;">
+        <div style="font-size:0.78em;font-weight:700;color:#64748b;margin-bottom:5px;">${label}${badge}</div>
+        <div class="${redClass}" style="margin-bottom:3px;">${teamList(redTeams)}${scoreEl(redScore)}</div>
+        <div class="${blueClass}">${teamList(blueTeams)}${scoreEl(blueScore)}</div>
+    </div>`;
 }
 
 // ── WATCH LIST ENGINE ────────────────────────────────────────────────────────
@@ -7557,6 +8107,18 @@ function loadDraftWeights() {
     return { scout: 50, statbotics: 25, opr: 25 };
 }
 let draftWeights = loadDraftWeights();
+let draftNumAlliances = Math.max(2, parseInt(localStorage.getItem('draftNumAlliances')) || 8);
+let draftPicksPerAlliance = Math.max(1, parseInt(localStorage.getItem('draftPicksPerAlliance')) || 2);
+
+window.saveDraftConfig = function () {
+    draftNumAlliances = Math.max(2, Math.min(16, parseInt(document.getElementById('draftNumAlliances')?.value) || 8));
+    draftPicksPerAlliance = Math.max(1, Math.min(5, parseInt(document.getElementById('draftPicksPerAlliance')?.value) || 2));
+    localStorage.setItem('draftNumAlliances', draftNumAlliances);
+    localStorage.setItem('draftPicksPerAlliance', draftPicksPerAlliance);
+    draftHistory = [];
+    localStorage.removeItem('mockDraftState');
+    renderDraft();
+};
 
 window.saveDraftWeights = function () {
     draftWeights = {
@@ -7578,13 +8140,13 @@ window.setDraftMode = function (mode) {
             if (raw) {
                 try {
                     const data = JSON.parse(raw);
-                    const alliances = Array.from({ length: 8 }, (_, i) => {
+                    const alliances = Array.from({ length: draftNumAlliances }, (_, i) => {
                         const a = data[i];
-                        if (!a) return { captain: null, pick1: null, pick2: null };
-                        const strip = key => a.picks[key]?.replace(/^frc/i, '') || null;
-                        return { captain: strip(0), pick1: strip(1), pick2: strip(2) };
+                        if (!a) return { captain: null, picks: Array(draftPicksPerAlliance).fill(null) };
+                        const strip = k => a.picks?.[k]?.replace?.(/^frc/i, '') || null;
+                        return { captain: strip(0), picks: Array.from({ length: draftPicksPerAlliance }, (_, k) => strip(k + 1)) };
                     });
-                    saveDraftState({ alliances, currentAlliance: 8, currentRound: 2 });
+                    saveDraftState({ alliances, currentAlliance: draftNumAlliances, currentRound: draftPicksPerAlliance });
                 } catch {}
             }
         }
@@ -7593,24 +8155,45 @@ window.setDraftMode = function (mode) {
 };
 
 function loadDraftState() {
-    try { const s = JSON.parse(localStorage.getItem(`${draftMode}DraftState`)); if (s?.alliances?.length === 8) return s; } catch { }
+    try {
+        const s = JSON.parse(localStorage.getItem(`${draftMode}DraftState`));
+        if (!s?.alliances?.length) return null;
+        for (const a of s.alliances) {
+            if (!Array.isArray(a.picks)) {
+                a.picks = [a.pick1 ?? null, a.pick2 ?? null];
+                while (a.picks.length < draftPicksPerAlliance) a.picks.push(null);
+                a.picks = a.picks.slice(0, draftPicksPerAlliance);
+                delete a.pick1; delete a.pick2;
+            }
+        }
+        if (s.alliances.length !== draftNumAlliances) return null;
+        return s;
+    } catch { }
     return null;
 }
 function saveDraftState(s) { localStorage.setItem(`${draftMode}DraftState`, JSON.stringify(s)); }
 function freshDraftState() {
-    return { alliances: Array.from({ length: 8 }, () => ({ captain: null, pick1: null, pick2: null })), currentAlliance: 0, currentRound: 1 };
+    return {
+        alliances: Array.from({ length: draftNumAlliances }, () => ({ captain: null, picks: Array(draftPicksPerAlliance).fill(null) })),
+        currentAlliance: 0,
+        currentRound: 1,
+    };
 }
 function buildDraftPickedSet(alliances) {
     const s = new Set();
     for (const a of alliances) {
         if (a.captain) s.add(String(a.captain));
-        if (a.pick1) s.add(String(a.pick1));
-        if (a.pick2) s.add(String(a.pick2));
+        if (Array.isArray(a.picks)) {
+            for (const p of a.picks) if (p) s.add(String(p));
+        } else {
+            if (a.pick1) s.add(String(a.pick1));
+            if (a.pick2) s.add(String(a.pick2));
+        }
     }
     return s;
 }
 function draftFillCaptain(state) {
-    if (state.currentRound !== 1 || state.currentAlliance >= 8) return;
+    if (state.currentRound !== 1 || state.currentAlliance >= draftNumAlliances) return;
     const a = state.alliances[state.currentAlliance];
     if (a.captain !== null) return;
     const picked = buildDraftPickedSet(state.alliances);
@@ -7632,16 +8215,16 @@ window.loadTBAAlliances = async function () {
             return;
         }
 
-        const alliances = Array.from({ length: 8 }, (_, i) => {
+        const alliances = Array.from({ length: draftNumAlliances }, (_, i) => {
             const a = data[i];
-            if (!a) return { captain: null, pick1: null, pick2: null };
-            const strip = key => a.picks[key]?.replace(/^frc/i, '') || null;
-            return { captain: strip(0), pick1: strip(1), pick2: strip(2) };
+            if (!a) return { captain: null, picks: Array(draftPicksPerAlliance).fill(null) };
+            const strip = k => a.picks?.[k]?.replace?.(/^frc/i, '') || null;
+            return { captain: strip(0), picks: Array.from({ length: draftPicksPerAlliance }, (_, k) => strip(k + 1)) };
         });
 
         localStorage.setItem(`tbaAlliances_${eventKey}`, JSON.stringify(data));
         draftHistory = [];
-        saveDraftState({ alliances, currentAlliance: 8, currentRound: 2 });
+        saveDraftState({ alliances, currentAlliance: draftNumAlliances, currentRound: draftPicksPerAlliance });
         renderDraft();
         if (statusEl) statusEl.textContent = `Loaded ${data.length} alliance${data.length !== 1 ? 's' : ''} from TBA.`;
     } catch (err) {
@@ -7662,20 +8245,40 @@ window.draftUndo = function () {
 window.draftPick = function (teamNumber) {
     const tn = String(teamNumber);
     const state = loadDraftState() || freshDraftState();
-    if (state.currentAlliance >= 8 || state.currentAlliance < 0) return;
+    const N = draftNumAlliances;
+    const P = draftPicksPerAlliance;
+    if (state.currentAlliance >= N || state.currentAlliance < 0) return;
     if (buildDraftPickedSet(state.alliances).has(tn)) return;
     draftHistory.push(JSON.stringify(state));
     const a = state.alliances[state.currentAlliance];
-    if (state.currentRound === 1) {
-        if (!a.captain || a.pick1 !== null) return;
-        a.pick1 = tn;
+    const pickIdx = state.currentRound - 1;
+    if (!a.captain || a.picks[pickIdx] !== null) return;
+    a.picks[pickIdx] = tn;
+
+    const forward = (state.currentRound % 2 === 1);
+    if (forward) {
         state.currentAlliance++;
-        if (state.currentAlliance >= 8) { state.currentRound = 2; state.currentAlliance = 7; }
-        else draftFillCaptain(state);
+        if (state.currentAlliance >= N) {
+            if (state.currentRound >= P) {
+                state.currentAlliance = N; // done
+            } else {
+                state.currentRound++;
+                state.currentAlliance = N - 1; // start backward
+            }
+        } else if (state.currentRound === 1) {
+            draftFillCaptain(state);
+        }
     } else {
-        if (a.pick2 !== null) return;
-        a.pick2 = tn;
         state.currentAlliance--;
+        if (state.currentAlliance < 0) {
+            if (state.currentRound >= P) {
+                state.currentAlliance = -1; // done
+            } else {
+                state.currentRound++;
+                state.currentAlliance = 0; // start forward
+                draftFillCaptain(state);
+            }
+        }
     }
     saveDraftState(state);
     renderDraft();
@@ -8336,6 +8939,10 @@ async function renderDraft() {
         const el = document.getElementById(id);
         if (el && !el.dataset.initialized) { el.value = draftWeights[key]; el.dataset.initialized = '1'; }
     }
+    for (const [id, val] of [['draftNumAlliances', draftNumAlliances], ['draftPicksPerAlliance', draftPicksPerAlliance]]) {
+        const el = document.getElementById(id);
+        if (el && !el.dataset.initialized) { el.value = val; el.dataset.initialized = '1'; }
+    }
 
     const hasScout = Object.keys(scoutEPAMap).length > 0;
     const hasOPR   = allTBATeams.length > 0;
@@ -8400,8 +9007,8 @@ async function renderDraft() {
 
     const picked = buildDraftPickedSet(state.alliances);
     const isReal = draftMode === 'real';
-    const isDone = isReal || state.currentAlliance >= 8 || state.currentAlliance < 0;
-    const isUser = !isDone && (state.currentRound === 2 || state.alliances[state.currentAlliance]?.captain !== null);
+    const isDone = isReal || state.currentAlliance >= draftNumAlliances || state.currentAlliance < 0;
+    const isUser = !isDone && state.alliances[state.currentAlliance]?.captain !== null;
 
     // Sync mode toggle appearance and control visibility
     const mockBtn = document.getElementById('draftModeMockBtn');
@@ -8421,7 +9028,8 @@ async function renderDraft() {
         } else if (isDone) {
             statusEl.textContent = 'Draft complete.';
         } else if (isUser) {
-            const which = state.currentRound === 1 ? '1st pick' : '2nd pick';
+            const ordinals = ['1st','2nd','3rd','4th','5th'];
+            const which = (ordinals[state.currentRound - 1] || `${state.currentRound}th`) + ' pick';
             statusEl.textContent = `Alliance ${state.currentAlliance + 1} selecting ${which} — click a team →`;
         } else {
             statusEl.textContent = 'Filling captain…';
@@ -8431,41 +9039,58 @@ async function renderDraft() {
     // ── Alliance table ──
     const epaOf = blendedEPA;
 
-    // Expected total = sum of top 24 EPAs divided evenly across 8 alliances
-    const top24sum = allTeams.map(t => epaOf(String(t.teamNumber))).sort((a, b) => b - a).slice(0, 24).reduce((s, v) => s + v, 0);
-    const expectedTotal = top24sum / 8;
+    const topNCount = draftNumAlliances * (draftPicksPerAlliance + 1);
+    const topNsum = allTeams.map(t => epaOf(String(t.teamNumber))).sort((a, b) => b - a).slice(0, topNCount).reduce((s, v) => s + v, 0);
+    const expectedTotal = topNsum / draftNumAlliances;
 
     const teamChip = tn => {
         if (!tn) return `<span style="color:#1e293b;">—</span>`;
         return `<span style="font-weight:800;color:#f8fafc;cursor:pointer;text-decoration:underline;text-underline-offset:2px;"
             onclick="event.stopPropagation();viewTeamDetail(${parseInt(tn)})">${tn}</span>`;
     };
+    // Update table header to match current pick count
+    const allianceHead = document.getElementById('draftAllianceHead');
+    if (allianceHead) {
+        const thStyle = 'padding:10px 8px;border-bottom:2px solid #334155;color:#94a3b8;text-align:center;';
+        const pickHeaders = Array.from({ length: draftPicksPerAlliance }, (_, k) =>
+            `<th style="${thStyle}">Pick ${k + 1}</th>`).join('');
+        allianceHead.innerHTML = `<tr>
+            <th style="width:50px;${thStyle}">Alliance</th>
+            <th style="${thStyle}">Captain</th>
+            ${pickHeaders}
+            <th style="${thStyle}">EPA</th>
+        </tr>`;
+    }
+
     allianceBody.innerHTML = state.alliances.map((a, i) => {
-        const { solid, bg } = DRAFT_ALLIANCE_COLORS[i];
+        const { solid, bg } = DRAFT_ALLIANCE_COLORS[i % DRAFT_ALLIANCE_COLORS.length];
         const isActive = !isDone && state.currentAlliance === i;
         const rowBg = isActive ? bg : (i % 2 ? '#080d16' : '#0f172a');
         const leftBorder = isActive ? `box-shadow:inset 3px 0 0 ${solid};` : '';
-        const activePick1 = isActive && state.currentRound === 1 && !!a.captain && !a.pick1;
-        const activePick2 = isActive && state.currentRound === 2 && !a.pick2;
+        const activePickIdx = isActive ? state.currentRound - 1 : -1;
         const cell = (content, active) =>
             `<td style="padding:11px 10px;border-bottom:1px solid #1e293b;text-align:center;` +
             (active ? `outline:1px dashed ${solid};outline-offset:-3px;` : '') + `">${content}</td>`;
 
-        const all3 = a.captain && a.pick1 && a.pick2;
-        const presentMembers = [a.captain, a.pick1, a.pick2].filter(Boolean);
+        const picks = Array.isArray(a.picks) ? a.picks : [a.pick1 ?? null, a.pick2 ?? null];
+        const allFilled = a.captain && picks.every(Boolean);
+        const presentMembers = [a.captain, ...picks].filter(Boolean);
         const total = presentMembers.length > 0 ? presentMembers.reduce((s, tn) => s + epaOf(tn), 0) : null;
-        const pct = all3 && expectedTotal > 0 ? (total - expectedTotal) / expectedTotal : null;
+        const pct = allFilled && expectedTotal > 0 ? (total - expectedTotal) / expectedTotal : null;
         const totalColor = pct != null
             ? (pct > 0.12 ? '#4ade80' : pct > 0.04 ? '#a3e635' : pct > -0.04 ? '#f8fafc' : pct > -0.12 ? '#fb923c' : '#ef4444')
             : (total != null ? '#94a3b8' : '#334155');
+
+        const pickCells = picks.map((pick, pi) =>
+            cell(teamChip(pick), isActive && pi === activePickIdx && !pick)
+        ).join('');
 
         return `<tr style="background:${rowBg};${leftBorder}">
             <td style="padding:11px 8px;border-bottom:1px solid #1e293b;text-align:center;">
                 <span style="color:#f8fafc;font-weight:900;font-size:1.2em;">${i + 1}</span>
             </td>
             ${cell(teamChip(a.captain), false)}
-            ${cell(teamChip(a.pick1), activePick1)}
-            ${cell(teamChip(a.pick2), activePick2)}
+            ${pickCells}
             <td style="padding:11px 10px;border-bottom:1px solid #1e293b;text-align:center;color:${totalColor};font-weight:700;">
                 ${total != null ? total.toFixed(1) : '—'}
             </td>
@@ -8885,6 +9510,7 @@ async function renderWLMatchesTab(teamNumber) {
     const thresholds = effectiveThresholds.filter(r => r.threshold != null);
 
     const teamMatches = allMatches
+        .filter(m => !m.compLevel || m.compLevel === 'qm')
         .filter(m => m.red?.includes(tnStr) || m.blue?.includes(tnStr))
         .sort((a, b) => a.matchNumber - b.matchNumber);
 
@@ -9111,6 +9737,7 @@ async function renderMatchesTab(teamNumber, containerId = 'tab-matches') {
 
     const globalIgnored  = new Set(allMatches.filter(m => m.globallyIgnored).map(m => m.key));
     const playedMatches  = allMatches
+        .filter(m => !m.compLevel || m.compLevel === 'qm')
         .filter(m => (m.redScore ?? -1) >= 0 && !globalIgnored.has(m.key))
         .filter(m => m.red?.includes(teamStr) || m.blue?.includes(teamStr))
         .sort((a, b) => a.matchNumber - b.matchNumber);
@@ -10074,6 +10701,7 @@ const bootApp = async () => {
     initColorMode();
     initNotifications();
     initNexusIntegration();
+    updateLocalEpaUI();
     setInterval(updateBannerTick, 1000);
     window.switchView('homeView');
 

@@ -41,9 +41,13 @@ Incorporate Nexus-provided elim brackets & alliances - Blue alliance does not up
 Add the ability to customize pick lists. One option is strict ordering (which is currently implemented). Another should be categorical, where teams are added to ranked categoreis ("Great", "Good", "Meh", "DNP", etc.). These categores are different than the tiers already implemented (S/A/B, etc.), but when teams are displayed in their category, they should be colored by the tier they occupy.
 
 
+D - Correct schedule tabs
+D - Round names for list view (11 & 12 swapped?)
+D - 4-team alliances for nexus (corrects for TBA)
+D - Matches tab only should only show quals
 
-
-
+Bracket view needs to be reorganized
+No longer detects non-standard?
 
 
 

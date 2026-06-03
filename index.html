@@ -929,6 +929,32 @@
         body.light-mode .setup-cta-btn-danger:hover  { background: #fee2e2; }
         body.light-mode .setup-autosync-row   { border-top-color: #e2e8f0; }
         body.light-mode #sync-data-status     { color: #94a3b8; }
+        /* ── Bracket view ─────────────────────────────────── */
+        .bracket-view { display:flex; gap:0; overflow-x:auto; padding-bottom:12px; min-height:560px; }
+        .bracket-col { display:flex; flex-direction:column; min-width:180px; flex:0 0 180px; }
+        .bracket-col-header { font-size:0.72em; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:#475569; text-align:center; padding:6px 0 10px; }
+        .bracket-slot { flex:1; display:flex; align-items:center; padding:0 8px; min-height:90px; }
+        .bracket-slot.spacer { min-height:40px; flex:0 0 40px; }
+        .bracket-connector { width:24px; flex:0 0 24px; align-self:stretch; display:flex; align-items:center; }
+        /* right-side bracket arm: vertical bar + horizontal tick at center */
+        .bracket-arm-top    { border-right:1px solid #334155; border-bottom:1px solid #334155; height:50%; align-self:flex-start; width:100%; }
+        .bracket-arm-bottom { border-right:1px solid #334155; border-top:1px solid #334155; height:50%; align-self:flex-end; width:100%; }
+        .bracket-arm-mid    { border-top:1px solid #334155; width:100%; height:1px; }
+        .bracket-card { background:#0f172a; border:1px solid #1e293b; border-radius:5px; padding:7px 9px; width:100%; font-size:0.82em; cursor:default; }
+        .bracket-card.queuing { border-color:#16a34a; }
+        .bracket-card.done    { opacity:0.9; }
+        .bracket-card-label { font-size:0.72em; color:#64748b; font-weight:600; margin-bottom:5px; }
+        .bracket-alliance { display:flex; justify-content:space-between; align-items:center; padding:2px 0; }
+        .bracket-alliance.red  { color:#fca5a5; border-left:2px solid #ef4444; padding-left:5px; margin-bottom:2px; }
+        .bracket-alliance.blue { color:#93c5fd; border-left:2px solid #3b82f6; padding-left:5px; }
+        .bracket-alliance.winner { font-weight:700; }
+        .bracket-alliance.loser  { opacity:0.5; }
+        .bracket-score { font-variant-numeric:tabular-nums; font-size:0.9em; }
+        .bracket-tbd { color:#475569; font-style:italic; }
+        body.light-mode .bracket-card { background:#f8fafc; border-color:#e2e8f0; }
+        body.light-mode .bracket-arm-top, body.light-mode .bracket-arm-bottom, body.light-mode .bracket-arm-mid { border-color:#cbd5e1; }
+        body.light-mode .bracket-col-header { color:#94a3b8; }
+        /* ── End bracket view ─────────────────────────────── */
         .notes-team-section > summary { list-style: none; cursor: pointer; }
         .notes-team-section > summary::-webkit-details-marker { display: none; }
         .notes-chevron { display: inline-block; transition: transform 0.15s; transform: rotate(-90deg); }
@@ -1549,9 +1575,9 @@
 
     <div id="scheduleView" class="app-view" style="display: none;">
         <div class="detail-tabs" id="scheduleTabs" style="margin-top:0; margin-bottom:12px;">
-            <button class="detail-tab-btn active" onclick="switchScheduleTab('matches')">Matches</button>
-            <button class="detail-tab-btn" onclick="switchScheduleTab('watchlist')">Watch List</button>
-            <button class="detail-tab-btn" onclick="switchScheduleTab('streams')">Streams</button>
+            <button class="detail-tab-btn active" onclick="switchScheduleTab('matches')">Quals</button>
+            <button class="detail-tab-btn" onclick="switchScheduleTab('watchlist')">Predictions</button>
+            <button class="detail-tab-btn" onclick="switchScheduleTab('bracket')">Elims</button>
         </div>
 
         <div id="schedule-sub-matches">
@@ -1603,8 +1629,17 @@
             <!-- rendered by renderWatchList() -->
         </div>
 
-        <div id="schedule-sub-streams" style="display:none;padding:16px 0;">
-            <!-- rendered by renderStreamsTab() -->
+        <div id="schedule-sub-bracket" style="display:none;padding:16px 0;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+                <button class="detail-tab-btn active" id="bracketViewBtn"
+                        onclick="window.setBracketMode('bracket')" style="padding:5px 14px;font-size:0.82em;">Bracket</button>
+                <button class="detail-tab-btn" id="bracketListBtn"
+                        onclick="window.setBracketMode('list')" style="padding:5px 14px;font-size:0.82em;">List</button>
+                <button class="shortcut-btn" onclick="window.renderBracketTab()" style="margin-left:auto;">↻ Refresh</button>
+            </div>
+            <div id="bracket-content">
+                <!-- rendered by renderBracketTab() -->
+            </div>
         </div>
     </div>
 
@@ -1639,6 +1674,7 @@
         <div class="detail-tabs" id="homeTabs" style="margin-top:0; margin-bottom:20px;">
             <button class="detail-tab-btn active" onclick="switchHomeTab('setup')">Event Setup</button>
             <button class="detail-tab-btn" onclick="switchHomeTab('overview')">Dashboard</button>
+            <button class="detail-tab-btn" onclick="switchHomeTab('stream')">Stream</button>
         </div>
 
         <div id="home-tab-setup" style="display:grid;">
@@ -1767,6 +1803,26 @@
                         <p style="color:#475569;font-size:0.78em;margin:0;">Status appears in the bar below the header. Notifications follow your notification settings.</p>
                     </div>
 
+                    <!-- Nexus Event Key Override -->
+                    <div class="setup-adv-section">
+                        <div class="setup-section-label setup-label-amber">Nexus Event Key</div>
+                        <p class="setup-section-desc">Override the event key sent to Nexus when it differs from the TBA key (common for offseason events).</p>
+                        <input id="nexusEventKeyOverride" type="text" placeholder="same as TBA key"
+                            style="padding:8px 10px;border-radius:4px;border:1px solid #334155;background:#0f172a;color:#f8fafc;font-size:0.85em;width:200px;"
+                            oninput="window.saveNexusEventKeyOverride()">
+                    </div>
+
+                    <!-- Local EPA Engine -->
+                    <div class="setup-adv-section">
+                        <div class="setup-section-label setup-label-green">Local EPA Engine</div>
+                        <p class="setup-section-desc">Compute EPA locally after each match sync — no Statbotics connection required during the event. Uses the Statbotics Kalman update formula seeded from pre-event history.</p>
+                        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+                            <button id="localEpaBtn" onclick="window.toggleLocalEpa()"
+                                    style="background:transparent;border:1px solid #334155;border-radius:4px;padding:4px 8px;cursor:pointer;font-size:1em;line-height:1;">⬜</button>
+                            <span style="font-size:0.88em;color:#94a3b8;">Local EPA — <span id="localEpaLabel">Off</span></span>
+                        </label>
+                    </div>
+
                     <!-- Save Archive -->
                     <div class="setup-adv-section">
                         <div class="setup-section-label setup-label-blue">Save Archive</div>
@@ -1875,6 +1931,9 @@
                 <tbody id="atAGlanceBody"></tbody>
             </table>
             </div>
+        </div>
+        <div id="home-tab-stream" style="display:none;padding:16px 0;">
+            <!-- rendered by renderStreamsTab() -->
         </div>
     </div>
 
@@ -2424,6 +2483,19 @@
                         style="background:#1e293b;color:#ef4444;border:1px solid #ef4444;border-radius:8px;padding:8px 16px;font-size:1rem;cursor:pointer;font-weight:600;">Reset</button>
                 </div>
             </div>
+            <!-- Format config -->
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:10px;padding:8px 12px;background:#0f172a;border-radius:6px;border:1px solid #1e293b;">
+                <span style="color:#475569;font-size:0.76em;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;white-space:nowrap;">Format:</span>
+                <label style="display:flex;align-items:center;gap:5px;color:#94a3b8;font-size:0.82em;white-space:nowrap;">Alliances
+                    <input id="draftNumAlliances" type="number" min="2" max="16" value="8" oninput="saveDraftConfig()"
+                        style="width:46px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#f8fafc;padding:3px 6px;font-size:0.9em;text-align:right;">
+                </label>
+                <label style="display:flex;align-items:center;gap:5px;color:#94a3b8;font-size:0.82em;white-space:nowrap;">Picks / alliance
+                    <input id="draftPicksPerAlliance" type="number" min="1" max="5" value="2" oninput="saveDraftConfig()"
+                        style="width:46px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#f8fafc;padding:3px 6px;font-size:0.9em;text-align:right;">
+                </label>
+                <span style="color:#475569;font-size:0.75em;font-style:italic;margin-left:auto;">Changing resets mock draft</span>
+            </div>
             <!-- EPA weight controls -->
             <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:12px;padding:8px 12px;background:#0f172a;border-radius:6px;border:1px solid #1e293b;">
                 <span style="color:#475569;font-size:0.76em;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;white-space:nowrap;">EPA weights:</span>
@@ -2444,25 +2516,7 @@
             <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;">
                 <div style="flex:1.6;min-width:280px;overflow-x:auto;">
                     <table style="width:100%;border-collapse:collapse;">
-                        <thead>
-                            <tr>
-                                <th
-                                    style="width:50px;padding:10px 8px;border-bottom:2px solid #334155;color:#94a3b8;text-align:center;">
-                                    Alliance</th>
-                                <th
-                                    style="padding:10px 8px;border-bottom:2px solid #334155;color:#94a3b8;text-align:center;">
-                                    Captain</th>
-                                <th
-                                    style="padding:10px 8px;border-bottom:2px solid #334155;color:#94a3b8;text-align:center;">
-                                    Pick 1</th>
-                                <th
-                                    style="padding:10px 8px;border-bottom:2px solid #334155;color:#94a3b8;text-align:center;">
-                                    Pick 2</th>
-                                <th
-                                    style="padding:10px 8px;border-bottom:2px solid #334155;color:#94a3b8;text-align:center;">
-                                    EPA</th>
-                            </tr>
-                        </thead>
+                        <thead id="draftAllianceHead"></thead>
                         <tbody id="draftAllianceBody"></tbody>
                     </table>
                 </div>
