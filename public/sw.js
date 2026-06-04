@@ -1,4 +1,4 @@
-const CACHE = 'scouting-v2';
+const CACHE = 'scouting-v3';
 
 self.addEventListener('install', event => {
     self.skipWaiting();
