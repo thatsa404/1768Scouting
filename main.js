@@ -32,13 +32,16 @@ const YT_KEY = import.meta.env.VITE_YOUTUBE_KEY || '';
 // ── NOTIFICATIONS ─────────────────────────────────────────────────────────────
 const _firedNotifIds = new Set(); // prevents re-firing within a session
 
-function fireNotif(title, body, tag) {
+function fireNotif(title, body, tag, vibrate = false) {
     if (localStorage.getItem('notifEnabled') !== 'true') return;
     if (Notification.permission === 'granted') {
         new Notification(title, { body, tag, icon: '/favicon.ico' });
     }
     if (document.visibilityState !== 'visible') {
         document.title = `🔔 ${title}`;
+    }
+    if (vibrate && navigator.vibrate) {
+        navigator.vibrate([300, 150, 300, 150, 300]);
     }
 }
 
@@ -88,8 +91,11 @@ window.currentFocusedTeam = null;
 // Polls a Cloudflare Worker relay (nexus-relay/worker.js) that receives
 // POST webhooks from frc.nexus and stores the latest payload in KV.
 
-let _nexusInterval  = null;
-let _nexusLastKey   = null; // "label|status" dedup key
+let _nexusInterval       = null;
+let _nexusDirectInterval = null; // direct API polling — runs independently of relay toggle
+let _queueNotifInterval  = null; // periodic fallback for time-based queueing notifications
+let _nexusLastKey        = null; // "label|status" dedup key
+let nexusMatchCache      = {}; // matchKey → { status, isQueuing }
 
 const NEXUS_DEFAULT_URL = 'https://nexus-relay.thatsa404.workers.dev';
 
@@ -119,6 +125,83 @@ function updateNexusUI() {
     if (label) label.textContent = (enabled && hasUrl) ? 'Connected' : hasUrl ? 'Off' : 'No URL';
 }
 
+function _nexusStatusBadge(status) {
+    if (!status) return '';
+    const lc = status.toLowerCase();
+    if (lc === 'now queuing') return `<span style="display:inline-block;padding:1px 5px;border-radius:3px;font-size:0.7em;font-weight:700;background:#14532d;color:#86efac;border:1px solid #16a34a;">NOW QUEUING</span>`;
+    if (lc === 'on deck')     return `<span style="display:inline-block;padding:1px 5px;border-radius:3px;font-size:0.7em;font-weight:700;background:#431407;color:#fdba74;border:1px solid #c2410c;">ON DECK</span>`;
+    if (lc === 'on field')    return `<span style="display:inline-block;padding:1px 5px;border-radius:3px;font-size:0.7em;font-weight:700;background:#164e63;color:#67e8f9;border:1px solid #0891b2;">ON FIELD</span>`;
+    return '';
+}
+
+// Parse all Nexus event data, update predicted times + match status cache.
+async function applyNexusEventData(data) {
+    if (!data?.matches) return;
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    if (!eventKey) return;
+
+    const updates = [];
+    const now = Math.floor(Date.now() / 1000);
+
+    for (const nm of data.matches) {
+        const label = (nm.label ?? '').trim();
+        let dbKey = null;
+
+        const qualMatch = label.match(/^qualification\s+(\d+)$/i);
+        if (qualMatch) {
+            dbKey = `${eventKey}_qm${qualMatch[1]}`;
+        } else {
+            const playoffMatch = label.match(/^playoff\s+(\d+)$/i);
+            if (playoffMatch) dbKey = `${eventKey}_sf${playoffMatch[1]}m1`;
+        }
+        if (!dbKey) continue;
+
+        const status = (nm.status ?? '').trim();
+        const isQueuing = label === data.nowQueuing;
+        nexusMatchCache[dbKey] = { status, isQueuing };
+
+        // Update predicted time if Nexus has a better estimate (>30s drift)
+        const estMs = nm.times?.estimatedStartTime;
+        if (estMs && estMs > 0) {
+            const estSec = Math.floor(estMs / 1000);
+            const dbMatch = await db.matches.get(dbKey);
+            if (dbMatch && (dbMatch.redScore ?? -1) < 0) {
+                if (!dbMatch.predictedTime || Math.abs(estSec - dbMatch.predictedTime) > 30) {
+                    updates.push(db.matches.update(dbKey, { predictedTime: estSec }));
+                }
+            }
+        }
+    }
+
+    if (updates.length) await Promise.all(updates);
+
+    updateNexusScheduleStatus();
+    updateScheduleCountdowns();
+    updateHomeBanner();
+    check1768QueueNotifications();
+}
+
+// Update status badges on unscored cells in the schedule table.
+function updateNexusScheduleStatus() {
+    document.querySelectorAll('[data-unscored-key]').forEach(td => {
+        const key = td.dataset.unscoredKey;
+        const cached = nexusMatchCache[key];
+        if (!cached?.status) return;
+        const badge = _nexusStatusBadge(cached.status);
+        if (!badge) return;
+        // Replace or update the badge span, preserving the data-unscored-key attribute
+        let span = td.querySelector('.nexus-match-badge');
+        if (!span) {
+            span = document.createElement('span');
+            span.className = 'nexus-match-badge';
+            span.style.display = 'block';
+            td.innerHTML = '';
+            td.appendChild(span);
+        }
+        span.innerHTML = badge;
+    });
+}
+
 function startNexusPolling() {
     if (_nexusInterval) clearInterval(_nexusInterval);
     pollNexus();
@@ -131,30 +214,47 @@ function stopNexusPolling() {
 }
 
 async function pollNexus() {
+    // ── Relay worker (1768-focused, notifications only) ────────────────────────
     const url = getNexusUrl();
     if (!url) return;
-
-    // Only hit the worker when team 1768 has an unplayed match predicted within the next hour.
-    // If no schedule is loaded yet (our1768 is empty) we allow the poll as a fallback.
     const now = Math.floor(Date.now() / 1000);
     const allMatches = await db.matches.toArray();
     const our1768 = allMatches.filter(m => m.red?.includes('1768') || m.blue?.includes('1768'));
-    if (our1768.length > 0) {
-        const soonUnplayed = our1768.some(m =>
-            (m.redScore ?? -1) < 0 &&
-            (m.predictedTime ?? 0) > now &&
-            (m.predictedTime ?? 0) <= now + 3600
-        );
-        if (!soonUnplayed) return;
-    }
-
+    const soonUnplayed = our1768.length === 0 || our1768.some(m =>
+        (m.redScore ?? -1) < 0 &&
+        (m.predictedTime ?? 0) > now &&
+        (m.predictedTime ?? 0) <= now + 3600
+    );
+    if (!soonUnplayed) return;
     try {
         const resp = await fetch(url, { cache: 'no-store' });
-        if (resp.status === 204) return; // no data yet
+        if (resp.status === 204) return;
         if (!resp.ok) return;
         const data = await resp.json();
         handleNexusPayload(data);
     } catch { /* network error — silently ignore */ }
+}
+
+// Direct Nexus API polling — timing & status for all matches, independent of relay toggle.
+async function pollNexusDirect() {
+    if (!NEXUS_KEY) return;
+    const allMatches = await db.matches.toArray();
+    if (!allMatches.some(m => (m.redScore ?? -1) < 0)) return;
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    if (!eventKey) return;
+    const data = await fetchNexusLiveStatus(eventKey);
+    if (data) await applyNexusEventData(data);
+}
+
+function startNexusDirectPolling() {
+    if (!NEXUS_KEY) return;
+    if (_nexusDirectInterval) clearInterval(_nexusDirectInterval);
+    pollNexusDirect();
+    _nexusDirectInterval = setInterval(pollNexusDirect, 20_000);
+    // 30s fallback for time-based queueing notifications (covers when neither Nexus
+    // nor TBA sync has fired recently — e.g. auto-sync disabled, no NEXUS_KEY)
+    if (_queueNotifInterval) clearInterval(_queueNotifInterval);
+    _queueNotifInterval = setInterval(check1768QueueNotifications, 30_000);
 }
 
 function handleNexusPayload(data) {
@@ -171,13 +271,93 @@ function handleNexusPayload(data) {
     if (key === _nexusLastKey) return;
     _nexusLastKey = key;
 
+    // Write relay data into nexusMatchCache so check1768QueueNotifications can read it
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    if (eventKey) {
+        const qualM = label.match(/^qualification\s+(\d+)$/i);
+        const playM = label.match(/^playoff\s+(\d+)$/i);
+        const dbKey = qualM ? `${eventKey}_qm${qualM[1]}`
+                    : playM ? `${eventKey}_sf${playM[1]}m1`
+                    : null;
+        if (dbKey) nexusMatchCache[dbKey] = { ...(nexusMatchCache[dbKey] || {}), status };
+    }
+
+    check1768QueueNotifications();
+
     const lc = status.toLowerCase();
-    if (lc === 'on deck') {
-        fireNotif(`📡 On Deck — ${label}`, 'Head to the field queue now.', `nexus-${key}`);
-    } else if (lc === 'on field') {
-        fireNotif(`📡 On Field — ${label}`, 'Match starting soon!', `nexus-${key}`);
-    } else if (lc.includes('result') || lc.includes('posted')) {
+    if (lc.includes('result') || lc.includes('posted')) {
         fireNotif(`📡 Results — ${label}`, status, `nexus-${key}`);
+    }
+}
+
+// Checks whether team 1768 should receive a queueing-stage notification for their
+// next match, using (in priority order): Nexus status cache, match-completion position,
+// or a 25-minute time-based fallback.
+async function check1768QueueNotifications() {
+    if (localStorage.getItem('notifEnabled') !== 'true') return;
+
+    const allMatches = await db.matches.orderBy('matchNumber').toArray();
+    const qualMatches = allMatches.filter(m => !m.compLevel || m.compLevel === 'qm');
+
+    const next = qualMatches.find(m =>
+        (m.red?.includes('1768') || m.blue?.includes('1768')) &&
+        (m.redScore ?? -1) < 0
+    );
+    if (!next) return;
+
+    const matchKey    = next.key;
+    const matchNum    = next.matchNumber;
+    const allianceStr = next.red?.includes('1768') ? 'Red alliance' : 'Blue alliance';
+    const matchIdx    = qualMatches.findIndex(m => m.key === matchKey);
+
+    const idQueued  = `1768-queued-${matchKey}`;
+    const idOnDeck  = `1768-ondeck-${matchKey}`;
+    const idOnField = `1768-onfield-${matchKey}`;
+
+    // Determine the highest status level we should be at right now.
+    // Priority: Nexus cache → match completions → time fallback
+    let level = null;
+
+    const nexusStatus = (nexusMatchCache[matchKey]?.status ?? '').toLowerCase();
+    if (nexusStatus === 'on field' || nexusStatus === 'now on field') {
+        level = 'onfield';
+    } else if (nexusStatus === 'on deck') {
+        level = 'ondeck';
+    } else if (nexusStatus === 'now queuing' || nexusStatus === 'queued') {
+        level = 'queued';
+    } else {
+        // Match-completion-based: N-1 done → on field, N-2 done → on deck, N-3 done → queued
+        const isDone = m => (m?.redScore ?? -1) >= 0;
+        const prev1 = matchIdx > 0 ? qualMatches[matchIdx - 1] : null;
+        const prev2 = matchIdx > 1 ? qualMatches[matchIdx - 2] : null;
+        const prev3 = matchIdx > 2 ? qualMatches[matchIdx - 3] : null;
+
+        if (isDone(prev1))      level = 'onfield';
+        else if (isDone(prev2)) level = 'ondeck';
+        else if (isDone(prev3)) level = 'queued';
+        else {
+            // Time fallback: fire "queued" when ≤25 min to estimated start
+            const now = Math.floor(Date.now() / 1000);
+            const est = next.predictedTime ?? 0;
+            if (est > 0 && (est - now) > 0 && (est - now) <= 25 * 60) level = 'queued';
+        }
+    }
+
+    if (!level) return;
+
+    // Fire the highest-priority un-fired notification.
+    // Higher levels (onfield > ondeck > queued) are independent — each fires once.
+    if (level === 'onfield' && !_firedNotifIds.has(idOnField)) {
+        _firedNotifIds.add(idOnField);
+        fireNotif(`🟢 On Field — QM ${matchNum}`, `1768 (${allianceStr}) — head to the field now!`, idOnField, true);
+    }
+    if ((level === 'ondeck' || level === 'onfield') && !_firedNotifIds.has(idOnDeck)) {
+        _firedNotifIds.add(idOnDeck);
+        fireNotif(`🟡 On Deck — QM ${matchNum}`, `1768 (${allianceStr}) — next in queue`, idOnDeck, true);
+    }
+    if (!_firedNotifIds.has(idQueued)) {
+        _firedNotifIds.add(idQueued);
+        fireNotif(`🔵 Queued — QM ${matchNum}`, `1768 (${allianceStr}) — head to queuing`, idQueued, true);
     }
 }
 
@@ -217,6 +397,12 @@ window.saveNexusUrl = function () {
 function initNexusIntegration() {
     updateNexusUI();
     if (isNexusEnabled() && getNexusUrl()) startNexusPolling();
+    startNexusDirectPolling();
+    // Always start the queueing-notification fallback timer, even without NEXUS_KEY
+    if (!NEXUS_KEY) {
+        if (_queueNotifInterval) clearInterval(_queueNotifInterval);
+        _queueNotifInterval = setInterval(check1768QueueNotifications, 30_000);
+    }
 }
 
 // ── Nexus REST API ─────────────────────────────────────────────────────────────
@@ -310,6 +496,7 @@ window.selectPresetEvent = async function (key) {
     const existingKey = input?.value.trim().toLowerCase();
     if (existingKey && existingKey !== key) {
         await _silentClearEvent(existingKey);
+        nexusMatchCache = {};
     }
 
     if (input) input.value = key;
@@ -627,7 +814,11 @@ window.displaySchedule = async function () {
                 : matchPassed
                     ? `<td rowspan="2" onclick="viewMatchDetail('${m.key}')"
                            style="cursor:pointer;border-left:2px solid #334155;vertical-align:middle;text-align:center;white-space:nowrap;min-width:2.8rem;">⏩</td>`
-                    : `<td rowspan="2" data-unscored-key="${m.key}" data-unscored-time="${m.predictedTime}" style="color:#64748b;font-style:italic;border-left:2px solid #334155;vertical-align:middle;text-align:center;white-space:nowrap;min-width:2.8rem;">—</td>`;
+                    : (() => {
+                        const nb = _nexusStatusBadge(nexusMatchCache[m.key]?.status);
+                        const inner = nb ? `<span class="nexus-match-badge" style="display:block;">${nb}</span>` : '—';
+                        return `<td rowspan="2" data-unscored-key="${m.key}" data-unscored-time="${m.predictedTime}" style="color:#64748b;font-style:italic;border-left:2px solid #334155;vertical-align:middle;text-align:center;white-space:nowrap;min-width:2.8rem;">${inner}</td>`;
+                    })();
 
             const mobileCountdown = m.redScore <= -1 && m.predictedTime
                 ? `<div data-predicted-time="${m.predictedTime}" data-match-key="${m.key}" style="font-size:0.65em;color:#64748b;margin-top:2px;"></div>`
@@ -657,7 +848,11 @@ window.displaySchedule = async function () {
                    </td>`
                 : matchPassed
                     ? `<td onclick="viewMatchDetail('${m.key}')" style="cursor:pointer;border-left:2px solid #334155;text-align:center;color:#64748b;">⏩</td>`
-                    : `<td data-unscored-key="${m.key}" data-unscored-time="${m.predictedTime}" style="color:#64748b;font-style:italic;border-left:2px solid #334155;">Upcoming</td>`;
+                    : (() => {
+                        const nb = _nexusStatusBadge(nexusMatchCache[m.key]?.status);
+                        const inner = nb ? `<span class="nexus-match-badge" style="display:block;">${nb}</span>` : 'Upcoming';
+                        return `<td data-unscored-key="${m.key}" data-unscored-time="${m.predictedTime}" style="color:#64748b;font-style:italic;border-left:2px solid #334155;">${inner}</td>`;
+                    })();
             const desktopCountdown = m.redScore <= -1 && m.predictedTime
                 ? `<div data-predicted-time="${m.predictedTime}" data-match-key="${m.key}" style="font-size:0.65em;color:#64748b;margin-top:2px;"></div>`
                 : '';
@@ -768,26 +963,6 @@ function updateScheduleCountdowns() {
             const s = String(remaining % 60).padStart(2, '0');
             el.textContent = m > 0 ? `${m}m ${s}s` : `${s}s`;
         }
-        // 5-minute warning for focused team's matches
-        const matchKey = el.dataset.matchKey;
-        if (matchKey && remaining > 0 && remaining <= 300) {
-            const notifId = `warn-${matchKey}`;
-            if (!_firedNotifIds.has(notifId)) {
-                const row = el.closest('tr');
-                const teams = (row?.dataset.teams || '').split(',').filter(Boolean);
-                const focused = window.currentFocusedTeam;
-                if (focused && teams.includes(focused)) {
-                    _firedNotifIds.add(notifId);
-                    const matchNum = matchKey.split('_qm')[1] || matchKey;
-                    const mins = Math.ceil(remaining / 60);
-                    fireNotif(
-                        `QM ${matchNum} in ~${mins} min`,
-                        `${teams.slice(0, 3).join(', ')} vs ${teams.slice(3).join(', ')}`,
-                        notifId
-                    );
-                }
-            }
-        }
     });
     // Flip "Upcoming / —" cells to ⏩ once their predicted time passes
     document.querySelectorAll('[data-unscored-key]').forEach(td => {
@@ -878,7 +1053,7 @@ window.viewMatchPrep = async function (matchKey) {
             <div class="prep-card-header" onclick="highlightTeam('${teamNum}')" style="cursor:pointer;">
                 <div class="header-left">
                     <span class="prep-team-number">${teamNum}</span>
-                    <div style="color:#94a3b8;font-size:0.78em;font-weight:600;">EPA ${team.currentEPA.toFixed(1)}</div>
+                    <div style="color:#94a3b8;font-size:0.78em;font-weight:600;">EPA ${team.currentEPA.toFixed(1)}${localEpaBadge(team)}</div>
                 </div>
                 ${tierBadge(tier, 'prep-tier-badge', 'Tier')}
             </div>
@@ -1977,6 +2152,7 @@ window.syncSchedule = async function () {
         statusDiv.innerText = "✅ Schedule Sync Complete!";
         displaySchedule();
         maybeAutoActivateNexus();
+        startNexusDirectPolling();
     } catch (err) {
         console.error(err);
         statusDiv.innerText = "❌ TBA Schedule Sync Failed.";
@@ -2079,6 +2255,18 @@ async function _runTBASyncs() {
 
 function isLocalEpaEnabled() { return localStorage.getItem('localEpaEnabled') === 'true'; }
 
+function teamHasSbEventData(team) {
+    const ek = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    if (!ek || !team) return false;
+    return (team.rawStatboticsData || []).some(m => m.event === ek && m.epa?.post);
+}
+
+function localEpaBadge(team = null) {
+    if (!isLocalEpaEnabled()) return '';
+    if (team && teamHasSbEventData(team)) return '';
+    return `<span style="color:#60a5fa;font-size:0.65em;font-weight:600;margin-left:3px;">EST</span>`;
+}
+
 async function _capturePreEventEPA(teams) {
     const updates = teams
         .filter(t => t.preEventEPA == null && t.currentEPA != null)
@@ -2092,17 +2280,56 @@ async function _capturePreEventEPA(teams) {
 }
 
 async function computeLocalEPA() {
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
     const [teams, matches] = await Promise.all([db.teams.toArray(), db.matches.toArray()]);
     if (!teams.length) return;
 
-    // Start from pre-event baseline (captured at first enable) or existing EPA
-    const epaState = {};
+    // Partition teams: those where statbotics already has current-event match data
+    // should never be overwritten by local estimates — restore their statbotics values.
+    const sbTeams = [];
+    const localTeams = [];
     for (const t of teams) {
+        const sbEventMatches = (t.rawStatboticsData || [])
+            .filter(m => eventKey && m.event === eventKey && m.epa?.post)
+            .sort((a, b) => (a.time || 0) - (b.time || 0));
+        if (sbEventMatches.length > 0) {
+            t._sbLastEPA = sbEventMatches[sbEventMatches.length - 1].epa.post;
+            sbTeams.push(t);
+        } else {
+            localTeams.push(t);
+        }
+    }
+
+    // Restore statbotics values for teams that have current-event data, clearing any local overrides
+    if (sbTeams.length > 0) {
+        await Promise.all(sbTeams.map(t => db.teams.update(t.teamNumber, {
+            currentEPA:       t._sbLastEPA,
+            localEPATimeline: [],
+        })));
+    }
+
+    if (!localTeams.length) {
+        _localEpaLastMs = Date.now();
+        _updateSyncDataStatus();
+        if (activeTeamNumber) {
+            const refreshed = await db.teams.get(activeTeamNumber);
+            if (refreshed) activeTeamData = refreshed;
+        }
+        await refreshEPADisplays(activeTeamNumber);
+        if (activeTeamData && lastDetailDataSubTab === 'epa') renderChart(activeTeamData);
+        return;
+    }
+
+    // Local Kalman computation for teams without statbotics event data.
+    // Seed n from career match count so K starts at the right level per Statbotics percent_func.
+    const epaState = {};
+    for (const t of localTeams) {
+        const careerN = (t.rawStatboticsData || []).filter(m => m.epa?.post).length;
         epaState[t.teamNumber] = {
             current:  t.preEventEPA        ?? t.currentEPA  ?? 0,
             auto:     t.preEventAutoEPA     ?? t.autoEPA     ?? 0,
             endgame:  t.preEventEndgameEPA  ?? t.endgameEPA  ?? 0,
-            n: 0,
+            n: careerN,
         };
     }
     const getE = tn => epaState[tn] || (epaState[tn] = { current: 0, auto: 0, endgame: 0, n: 0 });
@@ -2111,7 +2338,13 @@ async function computeLocalEPA() {
         .filter(m => (m.redScore ?? -1) >= 0 && (m.blueScore ?? -1) >= 0)
         .sort((a, b) => (a.actualTime || a.predictedTime || 0) - (b.actualTime || b.predictedTime || 0));
 
+    // Per-team timeline: String(teamNumber) -> [{label, epa}]
+    const teamTimeline = {};
+
     for (const m of played) {
+        const matchLabel = (!m.compLevel || m.compLevel === 'qm') ? `Q${m.matchNumber}` : `P${m.matchNumber}`;
+        const teamsInMatch = [];
+
         for (const [alliance, score, bd] of [
             [m.red  || [], m.redScore,  m.redBreakdown],
             [m.blue || [], m.blueScore, m.blueBreakdown],
@@ -2129,29 +2362,48 @@ async function computeLocalEPA() {
             for (const t of members) {
                 const e = getE(t);
                 e.n++;
-                const K = e.n <= 6 ? 0.5 : e.n <= 12 ? 0.5 - (e.n - 6) / 30 : 0.3;
+                const prev = Math.min(0.5, Math.max(0.3, 0.5 - (0.2 / 6) * (e.n - 6)));
+                const K = (2 / 3) * prev; // matches Statbotics percent_func for 2016+
                 e.current += K * (score - predTotal)   / N;
                 if (autoActual    != null) e.auto    += K * (autoActual    - predAuto)    / N;
                 if (endgameActual != null) e.endgame += K * (endgameActual - predEndgame) / N;
+                teamsInMatch.push(t);
             }
+        }
+
+        // Snapshot EPA for all teams that played in this match (after both alliances updated)
+        for (const t of teamsInMatch) {
+            if (!teamTimeline[t]) teamTimeline[t] = [];
+            teamTimeline[t].push({ label: matchLabel, epa: getE(t).current });
         }
     }
 
-    await Promise.all(teams.map(t => {
+    await Promise.all(localTeams.map(t => {
         const e = epaState[t.teamNumber];
         if (!e || e.n === 0) return null;
         return db.teams.update(t.teamNumber, {
-            currentEPA: e.current,
-            autoEPA:    e.auto,
-            teleopEPA:  e.current - e.auto - e.endgame,
-            endgameEPA: e.endgame,
+            currentEPA:         e.current,
+            autoEPA:            e.auto,
+            teleopEPA:          e.current - e.auto - e.endgame,
+            endgameEPA:         e.endgame,
+            localEPATimeline:   teamTimeline[String(t.teamNumber)] || [],
         });
     }).filter(Boolean));
 
     _localEpaLastMs = Date.now();
     _updateSyncDataStatus();
-    displayTeams();
-    await renderAtAGlance();
+
+    // Refresh in-memory active team so renderOverview + chart use fresh EPA values
+    if (activeTeamNumber) {
+        const refreshed = await db.teams.get(activeTeamNumber);
+        if (refreshed) activeTeamData = refreshed;
+    }
+    await refreshEPADisplays(activeTeamNumber);
+
+    // Re-render chart if the EPA sub-tab is currently visible
+    if (activeTeamData && lastDetailDataSubTab === 'epa') {
+        renderChart(activeTeamData);
+    }
 }
 
 function updateLocalEpaUI() {
@@ -2175,16 +2427,24 @@ window.toggleLocalEpa = async function () {
     } else {
         // Restore pre-event Statbotics baseline
         const teams = await db.teams.toArray();
+        const ek = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
         await Promise.all(teams
-            .filter(t => t.preEventEPA != null)
+            .filter(t => t.preEventEPA != null && !(ek && (t.rawStatboticsData || []).some(m => m.event === ek && m.epa?.post)))
             .map(t => db.teams.update(t.teamNumber, {
-                currentEPA: t.preEventEPA,
-                autoEPA:    t.preEventAutoEPA    ?? t.autoEPA,
-                teleopEPA:  t.preEventTeleopEPA  ?? t.teleopEPA,
-                endgameEPA: t.preEventEndgameEPA ?? t.endgameEPA,
+                currentEPA:       t.preEventEPA,
+                autoEPA:          t.preEventAutoEPA    ?? t.autoEPA,
+                teleopEPA:        t.preEventTeleopEPA  ?? t.teleopEPA,
+                endgameEPA:       t.preEventEndgameEPA ?? t.endgameEPA,
+                localEPATimeline: [],
             })));
-        displayTeams();
-        await renderAtAGlance();
+        if (activeTeamNumber) {
+            const refreshed = await db.teams.get(activeTeamNumber);
+            if (refreshed) activeTeamData = refreshed;
+        }
+        await refreshEPADisplays(activeTeamNumber);
+        if (activeTeamData && lastDetailDataSubTab === 'epa') {
+            renderChart(activeTeamData);
+        }
     }
 };
 
@@ -2408,6 +2668,7 @@ window.loadEventArchive = async function (eventKey) {
         renderPickList();
         renderDraft();
         maybeAutoActivateNexus();
+        startNexusDirectPolling();
 
         // Auto-fetch webcasts if the archive had matches but no webcast data was bundled
         const hasMatches = !!(data.matches?.length);
@@ -2916,6 +3177,7 @@ window.clearEvent = async function () {
     if (!confirm(`Clear all data for ${eventKey} (API cache, scouting, and pit data)? This cannot be undone.`)) return;
 
     try {
+        nexusMatchCache = {};
         await _silentClearEvent(eventKey);
         updateOBEStatus(eventKey);
 
@@ -3367,14 +3629,15 @@ window.displayTeams = async function () {
         row.onclick = () => viewTeamDetail(team.teamNumber, 'epa-opr');
 
         // Notice we removed the onclick="" from the <td> string
+        const _eb = localEpaBadge(team);
         row.innerHTML = `
             <td>${tierBadge(tier)}</td>
             <td style="white-space:nowrap;"><strong>${team.teamNumber}</strong>${ownStar(team.teamNumber)}</td>
-            <td>${team.currentEPA ? team.currentEPA.toFixed(1) : 'N/A'}</td>
+            <td>${team.currentEPA ? team.currentEPA.toFixed(1) : 'N/A'}${_eb}</td>
             <td class="ceiling-cell"><strong>${ceiling}</strong></td>
-            <td style="color:#aaa;">${team.autoEPA ? team.autoEPA.toFixed(1) : '-'}</td>
-            <td style="color:#aaa;">${team.teleopEPA ? team.teleopEPA.toFixed(1) : '-'}</td>
-            <td style="color:#aaa;">${team.endgameEPA ? team.endgameEPA.toFixed(1) : '-'}</td>
+            <td style="color:#aaa;">${team.autoEPA ? team.autoEPA.toFixed(1) + _eb : '-'}</td>
+            <td style="color:#aaa;">${team.teleopEPA ? team.teleopEPA.toFixed(1) + _eb : '-'}</td>
+            <td style="color:#aaa;">${team.endgameEPA ? team.endgameEPA.toFixed(1) + _eb : '-'}</td>
         `;
 
         tableBody.appendChild(row);
@@ -3640,6 +3903,8 @@ window.syncTBAMatches = async function () {
         statusDiv.innerText = `✅ TBA Matches synced (${qualCount} qual${playoffCount ? `, ${playoffCount} playoff` : ''}).`;
         displaySchedule();
         maybeAutoActivateNexus();
+        startNexusDirectPolling();
+        check1768QueueNotifications();
 
         // Auto-fetch webcasts if they haven't been stored yet for this event
         if (!JSON.parse(localStorage.getItem(`webcasts_${eventKey}`) || '[]').length) {
@@ -4151,7 +4416,7 @@ async function renderAtAGlance() {
             ${teamCell}
             ${td(`<span style="color:${ts.color};">${compStr}</span>`)}
             ${td(`${rpStr}${record ? `<div style="color:#94a3b8;font-size:0.75em;font-weight:600;margin-top:2px;white-space:nowrap;">${record}</div>` : ''}`)}
-            ${td(`${epaStr}${ceilBadge}`)}
+            ${td(`${epaStr}${ceilBadge}${localEpaBadge(team)}`)}
             ${td(hasOPR ? `${oprStr}${oprBadge}` : '—')}
             ${td(`${scoutStr}${fusedBadge}${scoutAdjBadge}`)}
         </tr>`;
@@ -4440,8 +4705,8 @@ window.viewTeamDetail = async function (teamNumber, tab = lastDetailTab) {
     const analysis = team.analysis || { ceiling: "—", lowerBound: "—", upperBound: "—" };
 
     stats.innerHTML = `
-        <div style="background:#333; padding:15px; border-radius:8px;">
-            <label style="color:#888; font-size:0.8em;">CURRENT EPA</label>
+        <div style="background:#333; padding:15px; border-radius:8px;" id="detailEpaCard">
+            <label style="color:#888; font-size:0.8em;">${isLocalEpaEnabled() && !teamHasSbEventData(team) ? 'LOCAL EPA' : 'CURRENT EPA'}</label>
             <div style="font-size:1.5em; font-weight:bold;">${team.currentEPA ? team.currentEPA.toFixed(1) : '0'}</div>
         </div>
         <div style="background:#333; padding:15px; border-radius:8px;">
@@ -4711,6 +4976,9 @@ window.renderBracketTab = async function () {
         for (const m of nexusPlayoff) {
             const n = parseInt((m.label || '').match(/\d+/)?.[0] || '0');
             const tba = tbaScoreMap[n] ?? null;
+            // Use TBA compLevel when available (reliable for non-standard brackets);
+            // fall back to n >= 14 only when TBA hasn't synced this match yet.
+            const isFinals = tba ? tba.compLevel === 'f' : n >= 14;
             matchEntries.push({
                 n, label: m.label,
                 redTeams:  m.redTeams  || [],
@@ -4720,7 +4988,7 @@ window.renderBracketTab = async function () {
                 blueScore: tba?.blueScore ?? null,
                 isQueuing: m.label === nowQueuing,
                 isDone: /complet|result/i.test(m.status || ''),
-                isFinals: n >= 14,
+                isFinals,
             });
         }
     }
@@ -4768,8 +5036,11 @@ window.renderBracketTab = async function () {
     matchEntries.sort((a, b) => a.n - b.n);
     const matchMap = Object.fromEntries(matchEntries.map(e => [e.n, e]));
 
-    // Non-standard bracket: any bracket match numbered above 13 (e.g. > 8 alliances)
-    const isNonStandard = matchEntries.some(e => !e.isFinals && e.n > 13);
+    // Standard double-elim: 13 bracket + up to 3 finals = max 16 total.
+    // F3 only exists after F1+F2 are both played (split), so if 16 are listed, at least 15 must be played.
+    // Anything beyond that is a non-standard bracket.
+    const playedCount = matchEntries.filter(e => e.isDone).length;
+    const isNonStandard = matchEntries.length > 16 || (matchEntries.length === 16 && playedCount < 15);
     const bracketViewBtn = document.getElementById('bracketViewBtn');
     const bracketListBtn = document.getElementById('bracketListBtn');
     if (bracketViewBtn) bracketViewBtn.style.display = isNonStandard ? 'none' : '';
@@ -7986,7 +8257,7 @@ async function renderPickList() {
                 const rpRank = rpRankMap[String(team.teamNumber)];
                 return td(rpRank != null ? `<span style="color:#94a3b8;font-weight:700;">#${rpRank}</span>` : '—');
             })()}
-            ${td(`${epaVal.toFixed(1)}${ceilBadge}`)}
+            ${td(`${epaVal.toFixed(1)}${ceilBadge}${localEpaBadge(team)}`)}
             ${td(hasOPR ? `${opr != null ? opr.toFixed(1) : '—'}${oprBadge}` : '—')}
             ${td(`${scoutStr}${fusedBadge}${scoutAdjBadge}`)}
             <td style="padding:13px 10px;border-bottom:1px solid #1e293b;text-align:center;">
@@ -9058,7 +9329,7 @@ async function renderDraft() {
             <th style="width:50px;${thStyle}">Alliance</th>
             <th style="${thStyle}">Captain</th>
             ${pickHeaders}
-            <th style="${thStyle}">EPA</th>
+            <th style="${thStyle}">EPA${localEpaBadge()}</th>
         </tr>`;
     }
 
@@ -9092,7 +9363,7 @@ async function renderDraft() {
             ${cell(teamChip(a.captain), false)}
             ${pickCells}
             <td style="padding:11px 10px;border-bottom:1px solid #1e293b;text-align:center;color:${totalColor};font-weight:700;">
-                ${total != null ? total.toFixed(1) : '—'}
+                ${total != null ? total.toFixed(1) + localEpaBadge() : '—'}
             </td>
         </tr>`;
     }).join('');
@@ -9119,7 +9390,7 @@ async function renderDraft() {
             <span style="color:#475569;font-size:0.75em;min-width:22px;text-align:right;font-weight:600;">${idx + 1}</span>
             <strong style="color:#f8fafc;font-size:0.95em;">${tn}</strong>
             <span style="color:#94a3b8;font-size:0.82em;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${t.teamName || ''}</span>
-            ${epaStr ? `<span style="color:#475569;font-size:0.75em;font-weight:600;">${epaStr}</span>` : ''}
+            ${epaStr ? `<span style="color:#475569;font-size:0.75em;font-weight:600;">${epaStr}${localEpaBadge(t)}</span>` : ''}
         </div>`;
     }).join('') || '<p style="color:#64748b;font-size:0.9em;padding:12px;">All teams placed.</p>';
 }
@@ -9278,10 +9549,11 @@ async function renderOverview(team, tbaTeam) {
     const hasCompOPR = !!tbaTeam && tbaTeam.autoOPR != null;
 
     // Table cell helpers
-    const cell = (val, tier) => {
+    // estCol: true for the Statbotics/local-EPA column — adds Est badge when local mode is on
+    const cell = (val, tier, estCol = false) => {
         if (val == null) return `<td style="text-align:right;padding:8px 12px;border-bottom:1px solid #1e293b;color:#475569;font-size:0.9em;">—</td>`;
         return `<td style="text-align:right;padding:8px 12px;border-bottom:1px solid #1e293b;white-space:nowrap;">
-            <span style="font-weight:700;color:#f1f5f9;margin-right:4px;">${fmt(val)}</span>${tier ? tierBadge(tier) : ''}
+            <span style="font-weight:700;color:#f1f5f9;margin-right:4px;">${fmt(val)}</span>${tier ? tierBadge(tier) : ''}${estCol ? localEpaBadge(team) : ''}
         </td>`;
     };
     const rowLabel = text =>
@@ -9311,7 +9583,7 @@ async function renderOverview(team, tbaTeam) {
                 <tr style="background:#1e293b;border-bottom:2px solid #334155;">
                     <th style="text-align:left;padding:10px 12px;color:#64748b;font-weight:600;font-size:0.75em;text-transform:uppercase;letter-spacing:0.05em;"></th>
                     <th style="text-align:right;padding:10px 12px;color:#64748b;font-weight:600;font-size:0.75em;text-transform:uppercase;letter-spacing:0.05em;">
-                        <img src="statbotics.ico" style="height:11px;vertical-align:middle;margin-right:3px;opacity:0.7;">Statbotics
+                        <img src="statbotics.ico" style="height:11px;vertical-align:middle;margin-right:3px;opacity:0.7;">${isLocalEpaEnabled() && !teamHasSbEventData(team) ? 'Local Est' : 'Statbotics'}
                     </th>
                     <th style="text-align:right;padding:10px 12px;color:#64748b;font-weight:600;font-size:0.75em;text-transform:uppercase;letter-spacing:0.05em;">
                         <img src="tba.png" class="source-logo" style="height:11px;margin:0 3px 0 0;vertical-align:middle;opacity:0.7;">TBA OPR
@@ -9322,19 +9594,19 @@ async function renderOverview(team, tbaTeam) {
             <tbody>
                 <tr>
                     ${rowLabel('Auto')}
-                    ${cell(team.autoEPA,                              tierAuto)}
+                    ${cell(team.autoEPA,                              tierAuto,       true)}
                     ${cell(hasCompOPR ? tbaTeam.autoOPR    : null,   tierAutoOPR)}
                     ${cell(scoutBreakdown?.auto,                      tierScoutAuto)}
                 </tr>
                 <tr>
                     ${rowLabel('Teleop')}
-                    ${cell(team.teleopEPA,                            tierTeleop)}
+                    ${cell(team.teleopEPA,                            tierTeleop,     true)}
                     ${cell(hasCompOPR ? tbaTeam.teleopOPR  : null,   tierTeleopOPR)}
                     ${cell(scoutBreakdown?.teleop,                    tierScoutTeleop)}
                 </tr>
                 <tr>
                     ${rowLabel('Endgame')}
-                    ${cell(team.endgameEPA,                           tierEndgame)}
+                    ${cell(team.endgameEPA,                           tierEndgame,    true)}
                     ${cell(hasCompOPR ? tbaTeam.endgameOPR : null,   tierEndgameOPR)}
                     ${cell(scoutBreakdown?.endgame,                   tierScoutEndgame)}
                 </tr>
@@ -9344,6 +9616,7 @@ async function renderOverview(team, tbaTeam) {
                         ${ceilStr !== '—'
                             ? `<span style="font-weight:700;color:#4ade80;margin-right:4px;">${ceilStr}</span>${tierBadge(tierOverall)}`
                             : `<span style="font-weight:700;color:#f1f5f9;margin-right:4px;">${fmt(team.currentEPA)}</span>${tierBadge(tierOverall)}`}
+                        ${localEpaBadge(team)}
                     </td>
                     <td style="text-align:right;padding:8px 12px;border-bottom:1px solid #1e293b;white-space:nowrap;">
                         ${effOPRVal != null
@@ -9356,15 +9629,11 @@ async function renderOverview(team, tbaTeam) {
         </table>
         </div>
 
-        ${sectionLabel('Per-Match Performance')}
-        <div id="overview-matches-chart"></div>
-
         ${sectionLabel('Notes')}
         <div id="overview-notes-section"></div>
     `;
 
     renderNoteSection(team.teamNumber);
-    await renderMatchesTab(team.teamNumber, 'overview-matches-chart');
     if (!team.photoUrl) fetchAndCacheTeamPhoto(team.teamNumber, photoId, team.eventKey?.slice(0, 4));
 }
 
@@ -9445,9 +9714,10 @@ function renderPitTab(teamNumber) {
 }
 
 window.switchDetailTab = async function (tab) {
-    // Destroy RP timeline chart when navigating away from Matches tab
+    // Destroy charts when navigating away from Matches tab
     if (lastDetailTab === 'matches' && tab !== 'matches') {
-        if (rpTimelineChart) { rpTimelineChart.destroy(); rpTimelineChart = null; }
+        if (rpTimelineChart)     { rpTimelineChart.destroy();     rpTimelineChart     = null; }
+        if (matchesChartInstance){ matchesChartInstance.destroy(); matchesChartInstance = null; }
         wlMatchesRenderedFor = null;
     }
     lastDetailTab = tab;
@@ -9518,6 +9788,9 @@ async function renderWLMatchesTab(teamNumber) {
         tableContainer.innerHTML = `<p style="color:#64748b;font-style:italic;margin-top:24px;text-align:center;">No matches found for team ${teamNumber}.</p>`;
         return;
     }
+
+    // Per-match performance chart (above RP timeline)
+    await renderMatchesTab(teamNumber, 'matches-tab-perf-chart');
 
     // Build predictions for ALL matches (played + unplayed) so we can chart expected RP
     const allPredictions = { ...matchPredictions };
@@ -9699,7 +9972,7 @@ async function renderWLMatchesTab(teamNumber) {
     wlMatchesRenderedFor = teamNumber;
 }
 
-async function renderMatchesTab(teamNumber, containerId = 'tab-matches') {
+async function renderMatchesTab(teamNumber, containerId = 'matches-tab-perf-chart') {
     const container = document.getElementById(containerId);
     if (!container) return;
 
@@ -9736,44 +10009,57 @@ async function renderMatchesTab(teamNumber, containerId = 'tab-matches') {
     const teamIgnoredKeys = new Set(getTeamIgnoredKeys(tbaTeamEntry));
 
     const globalIgnored  = new Set(allMatches.filter(m => m.globallyIgnored).map(m => m.key));
-    const playedMatches  = allMatches
+
+    // All scheduled qual matches for this team — used for x-axis
+    const allQualTeamMatches = allMatches
         .filter(m => !m.compLevel || m.compLevel === 'qm')
-        .filter(m => (m.redScore ?? -1) >= 0 && !globalIgnored.has(m.key))
         .filter(m => m.red?.includes(teamStr) || m.blue?.includes(teamStr))
         .sort((a, b) => a.matchNumber - b.matchNumber);
 
-    if (!playedMatches.length) {
+    if (!allQualTeamMatches.length) {
         container.innerHTML = '<p style="color:#64748b;font-style:italic;margin-top:24px;text-align:center;">No match data — sync TBA matches first.</p>';
         return;
     }
 
+    const playedKeys = new Set(
+        allQualTeamMatches
+            .filter(m => (m.redScore ?? -1) >= 0 && !globalIgnored.has(m.key))
+            .map(m => m.key)
+    );
+
     const labels     = [];
     const oprData    = [];
     const scoutData  = [];
-    const statEvData = [];   // eventEPA residual
+    const statEvData = [];
     const ignoredColIndices = new Set();
 
-    for (const m of playedMatches) {
-        const isRed       = m.red?.includes(teamStr);
-        const alliance    = isRed ? m.red : m.blue;
-        const allyScore   = isRed ? m.redScore : m.blueScore;
-        const partnerSum  = alliance.filter(t => t !== teamStr).reduce((s, t) => s + (oprMap[t] ?? 0), 0);
-        const oprDeviation = (allyScore - partnerSum) - teamOPR;
+    for (const m of allQualTeamMatches) {
+        const isPlayed = playedKeys.has(m.key);
 
-        const matchFused = fusedByMatch[m.matchNumber];
-        const scoutDeviation = (matchFused && avgFusedEPA != null && gameConfig?.computeFusedEPABreakdown)
-            ? gameConfig.computeFusedEPABreakdown(matchFused).total - avgFusedEPA
-            : null;
+        if (isPlayed) {
+            const isRed      = m.red?.includes(teamStr);
+            const alliance   = isRed ? m.red : m.blue;
+            const allyScore  = isRed ? m.redScore : m.blueScore;
+            const partnerSum = alliance.filter(t => t !== teamStr).reduce((s, t) => s + (oprMap[t] ?? 0), 0);
+            oprData.push(parseFloat(((allyScore - partnerSum) - teamOPR).toFixed(2)));
 
-        const evPartnerSum = alliance.filter(t => t !== teamStr).reduce((s, t) => s + (evEPAMap[t] ?? 0), 0);
-        const statEvDev    = teamEvEPA != null ? (allyScore - evPartnerSum) - teamEvEPA : null;
+            const matchFused = fusedByMatch[m.matchNumber];
+            const scoutDev   = (matchFused && avgFusedEPA != null && gameConfig?.computeFusedEPABreakdown)
+                ? parseFloat((gameConfig.computeFusedEPABreakdown(matchFused).total - avgFusedEPA).toFixed(2))
+                : null;
+            scoutData.push(scoutDev);
 
-        if (teamIgnoredKeys.has(m.key)) ignoredColIndices.add(labels.length);
+            const evPartnerSum = alliance.filter(t => t !== teamStr).reduce((s, t) => s + (evEPAMap[t] ?? 0), 0);
+            statEvData.push(teamEvEPA != null ? parseFloat(((allyScore - evPartnerSum) - teamEvEPA).toFixed(2)) : null);
+
+            if (teamIgnoredKeys.has(m.key)) ignoredColIndices.add(labels.length);
+        } else {
+            oprData.push(null);
+            scoutData.push(null);
+            statEvData.push(null);
+        }
 
         labels.push(`Q${m.matchNumber}`);
-        oprData.push(parseFloat(oprDeviation.toFixed(2)));
-        scoutData.push(scoutDeviation != null ? parseFloat(scoutDeviation.toFixed(2)) : null);
-        statEvData.push(statEvDev     != null ? parseFloat(statEvDev.toFixed(2))      : null);
     }
 
     // Per-match average across all non-null series (for the white reference line)
@@ -9809,7 +10095,7 @@ async function renderMatchesTab(teamNumber, containerId = 'tab-matches') {
             </div>
             <p style="margin:0 0 12px;font-size:0.78em;color:#475569;">Bars above zero = outperformed average; below = underperformed. All series share the same zero baseline.</p>
             <div style="overflow-x:auto;">
-                <div style="min-width:${Math.max(360, playedMatches.length * 54)}px;">
+                <div style="min-width:${Math.max(360, allQualTeamMatches.length * 54)}px;">
                     <div style="position:relative;height:320px;"><canvas id="matchesChart"></canvas></div>
                     <div style="display:flex;margin-top:6px;padding:0 2px;" id="matchesChartLinks"></div>
                 </div>
@@ -9817,16 +10103,17 @@ async function renderMatchesTab(teamNumber, containerId = 'tab-matches') {
         </div>
     `;
 
-    // Populate per-match links row after innerHTML is set
+    // Populate per-match links row — only played matches get a clickable link
     const linksRow = document.getElementById('matchesChartLinks');
     if (linksRow) {
-        linksRow.innerHTML = playedMatches.map(m => `
-            <div style="flex:1;display:flex;justify-content:center;">
-                <button onclick="viewMatchDetail('${m.key}')"
-                    title="Open Q${m.matchNumber} detail"
+        linksRow.innerHTML = allQualTeamMatches.map(m => {
+            const played = playedKeys.has(m.key);
+            return `<div style="flex:1;display:flex;justify-content:center;">${played
+                ? `<button onclick="viewMatchDetail('${m.key}')" title="Open Q${m.matchNumber} detail"
                     style="background:none;border:none;color:#334155;font-size:0.7em;cursor:pointer;padding:2px 4px;line-height:1;border-radius:3px;transition:color 0.15s;"
-                    onmouseover="this.style.color='#94a3b8'" onmouseout="this.style.color='#334155'">↗</button>
-            </div>`).join('');
+                    onmouseover="this.style.color='#94a3b8'" onmouseout="this.style.color='#334155'">↗</button>`
+                : ''}</div>`;
+        }).join('');
     }
 
     if (matchesChartInstance) { matchesChartInstance.destroy(); matchesChartInstance = null; }
@@ -10494,6 +10781,15 @@ function refilteredFusedStats(fusedResult, ignoredMatchNums) {
     return { ...fusedResult, stats };
 }
 
+function refreshDetailEpaCard(team) {
+    const card = document.getElementById('detailEpaCard');
+    if (!card || !team) return;
+    card.innerHTML = `
+        <label style="color:#888; font-size:0.8em;">${isLocalEpaEnabled() && !teamHasSbEventData(team) ? 'LOCAL EPA' : 'CURRENT EPA'}</label>
+        <div style="font-size:1.5em; font-weight:bold;">${team.currentEPA != null ? team.currentEPA.toFixed(1) : '0'}</div>
+    `;
+}
+
 async function refreshEPADisplays(teamNumber) {
     await Promise.all([
         displayTeams(),
@@ -10507,6 +10803,7 @@ async function refreshEPADisplays(teamNumber) {
         teamNumber != null && activeTeamData
             ? renderOverview(activeTeamData, activeTBAData) : Promise.resolve(),
     ]);
+    refreshDetailEpaCard(activeTeamData);
 }
 
 // Toggle a match key in/out of a team's individual ignore list.
@@ -10560,11 +10857,30 @@ function renderChart(team) {
     const ctx = document.getElementById('performanceChart').getContext('2d');
     if (performanceChart) performanceChart.destroy();
 
-    const playedMatches = team.rawStatboticsData.filter(m => m.epa?.post);
+    const playedMatches = (team.rawStatboticsData || []).filter(m => m.epa?.post);
     const epaData = playedMatches.map(m => m.epa.post);
     const eventLabels = playedMatches.map(m => m.event);
 
     const isMobile = document.body.classList.contains('mobile-ui');
+
+    // Use the currently-active event key (from the input field) rather than team.eventKey,
+    // which can be stale when statbotics fails to update the record for the current year.
+    const activeEventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase() || team.eventKey;
+    const localTimeline = isLocalEpaEnabled() ? (team.localEPATimeline || []) : [];
+    const showLocalPoints = isLocalEpaEnabled() && activeEventKey &&
+        !teamHasSbEventData(team) &&
+        (localTimeline.length > 0 || team.currentEPA != null);
+    const localColor = showLocalPoints ? getEventColor(activeEventKey) : null;
+
+    const chartLabels = epaData.map((_, i) => `M${i + 1}`);
+    if (showLocalPoints) {
+        if (localTimeline.length > 0) {
+            localTimeline.forEach(pt => chartLabels.push(pt.label));
+        } else {
+            chartLabels.push(activeEventKey.toUpperCase()); // pre-event baseline, no matches yet
+        }
+    }
+
     const datasets = [{
         label: 'Match EPA',
         data: epaData,
@@ -10574,6 +10890,25 @@ function renderChart(team) {
         pointBackgroundColor: eventLabels.map(ev => getEventColor(ev)),
         pointBorderColor: eventLabels.map(ev => getEventColor(ev))
     }];
+
+    if (showLocalPoints) {
+        const localData = new Array(epaData.length).fill(null);
+        if (localTimeline.length > 0) {
+            localTimeline.forEach(pt => localData.push(pt.epa));
+        } else {
+            localData.push(team.currentEPA); // pre-event baseline dot
+        }
+        datasets.push({
+            label: `${activeEventKey.toUpperCase()} (Est)`,
+            data: localData,
+            showLine: false,
+            pointRadius: isMobile ? 2.5 : 4,
+            pointHoverRadius: isMobile ? 4 : 6,
+            pointBackgroundColor: 'transparent',
+            pointBorderColor: localColor,
+            pointBorderWidth: 3,
+        });
+    }
 
     if (team.analysis && team.analysis.rawParams) {
         const trendData = new Array(epaData.length).fill(null);
@@ -10604,7 +10939,7 @@ function renderChart(team) {
     performanceChart = new Chart(ctx, {
         type: 'line',
         data: {
-            labels: epaData.map((_, i) => `M${i + 1}`),
+            labels: chartLabels,
             datasets: datasets
         },
         options: {
@@ -10616,17 +10951,28 @@ function renderChart(team) {
                     labels: {
                         // Custom legend to show event colors
                         generateLabels: (chart) => {
-                            const playedMatches = team.rawStatboticsData.filter(m => m.epa?.post);
+                            const playedMatches = (team.rawStatboticsData || []).filter(m => m.epa?.post);
                             const uniqueEvents = [...new Set(playedMatches.map(m => m.event))];
 
-                            return uniqueEvents.map(ev => ({
+                            const labels = uniqueEvents.map(ev => ({
                                 text: ev.toUpperCase(),
                                 fillStyle: getEventColor(ev),
                                 strokeStyle: getEventColor(ev),
                                 lineWidth: 0,
-                                // Some versions of Chart.js require explicit fontColor here
                                 fontColor: '#f8fafc'
                             }));
+
+                            if (showLocalPoints) {
+                                labels.push({
+                                    text: `${activeEventKey.toUpperCase()} (Est)`,
+                                    fillStyle: 'transparent',
+                                    strokeStyle: localColor,
+                                    lineWidth: 2,
+                                    fontColor: '#f8fafc'
+                                });
+                            }
+
+                            return labels;
                         }
                     }
                 }
