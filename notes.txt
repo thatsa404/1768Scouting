@@ -45,15 +45,19 @@ D - Correct schedule tabs
 D - Round names for list view (11 & 12 swapped?)
 D - 4-team alliances for nexus (corrects for TBA)
 D - Matches tab only should only show quals
+D - No longer detects non-standard?
 
 Bracket view needs to be reorganized
-No longer detects non-standard?
+Match OPR including playoff matches?
+
+
+
+
 
 
 
 
 2025 game details in new setup...
-
 Hidden buffs - algae & auto fuel
 
 

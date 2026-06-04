@@ -1436,7 +1436,7 @@ window.viewMatchDetail = async function (matchKey) {
             const matchTs = match.actualTime ?? match.predictedTime;
             const offset = Math.max(0, matchTs - stream.startTimestamp - 20);
             const thumbId = 'stream-seek-thumb';
-            videoSection.innerHTML = `
+            videoSection.innerHTML = ytSpeedBar() + `
                 <div style="color:#64748b;font-size:0.78em;font-style:italic;margin-bottom:6px;">No match video yet — live stream seeked to approx. match time</div>
                 <div id="${thumbId}" onclick="loadYTEmbedAtTime('${stream.channel}','${thumbId}',${offset})"
                     style="position:relative;cursor:pointer;border-radius:8px;overflow:hidden;background:#000;">
@@ -1452,7 +1452,7 @@ window.viewMatchDetail = async function (matchKey) {
             videoSection.innerHTML = `<p style="color:#64748b; font-style:italic; font-size:0.85em; margin:0;">No match video available.</p>`;
         }
     } else {
-        videoSection.innerHTML = ytKeys.map((key, i) => {
+        videoSection.innerHTML = ytSpeedBar() + ytKeys.map((key, i) => {
             const thumbId = `yt-thumb-${i}`;
             return `<div id="${thumbId}" onclick="loadYTEmbed('${key}','${thumbId}')"
                 style="position:relative; cursor:pointer; border-radius:8px; overflow:hidden; background:#000; ${i > 0 ? 'margin-top:12px;' : ''}">
@@ -1676,23 +1676,71 @@ function renderNoteSection(teamNum) {
         </div>` : `<button onclick="showOverviewNoteEditor(${teamNum})" style="background:#334155;color:#f8fafc;border:none;border-radius:6px;padding:6px 14px;font-size:0.82em;font-weight:600;cursor:pointer;">${hasGeneral ? 'Edit General Note' : 'Add General Note'}</button>`}`;
 }
 
+function getYTPlaybackRate() {
+    return parseFloat(localStorage.getItem('ytPlaybackRate') || '1');
+}
+
+function ytSpeedBar() {
+    const cur = getYTPlaybackRate();
+    const btns = [0.5, 0.75, 1, 1.25, 1.5, 2].map(r => {
+        const active = r === cur;
+        return `<button class="yt-speed-btn" data-rate="${r}" onclick="setYTPlaybackRate(${r})"
+            style="padding:2px 8px;font-size:0.72em;border-radius:4px;cursor:pointer;
+            border:1px solid ${active ? '#60a5fa' : '#334155'};
+            background:${active ? 'rgba(96,165,250,0.12)' : 'transparent'};
+            color:${active ? '#60a5fa' : '#64748b'};">${r}×</button>`;
+    }).join('');
+    return `<div style="display:flex;align-items:center;gap:5px;margin-bottom:8px;">
+        <span style="color:#475569;font-size:0.72em;font-weight:600;margin-right:2px;">SPEED</span>${btns}
+    </div>`;
+}
+
+window.setYTPlaybackRate = function(rate) {
+    localStorage.setItem('ytPlaybackRate', String(rate));
+    document.querySelectorAll('.yt-speed-btn').forEach(btn => {
+        const active = parseFloat(btn.dataset.rate) === rate;
+        btn.style.borderColor = active ? '#60a5fa' : '#334155';
+        btn.style.background  = active ? 'rgba(96,165,250,0.12)' : 'transparent';
+        btn.style.color       = active ? '#60a5fa' : '#64748b';
+    });
+    document.querySelectorAll('iframe[data-yt]').forEach(iframe => {
+        try { iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setPlaybackRate', args: [rate] }), '*'); } catch {}
+    });
+};
+
+window.applyYTPlaybackRate = function(iframeId) {
+    const rate = getYTPlaybackRate();
+    if (rate === 1) return;
+    const send = () => {
+        const iframe = document.getElementById(iframeId);
+        if (!iframe) return;
+        try { iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setPlaybackRate', args: [rate] }), '*'); } catch {}
+    };
+    setTimeout(send, 800);
+    setTimeout(send, 2000);
+};
+
 window.loadYTEmbed = function (key, thumbId) {
     const container = document.getElementById(thumbId);
     if (!container) return;
+    const iframeId = `yt-iframe-${thumbId}`;
     container.outerHTML = `<div style="position:relative; padding-bottom:56.25%; height:0; overflow:hidden; border-radius:8px;">
-        <iframe src="https://www.youtube-nocookie.com/embed/${key}?autoplay=1"
+        <iframe id="${iframeId}" data-yt="1" src="https://www.youtube-nocookie.com/embed/${key}?autoplay=1&enablejsapi=1"
             style="position:absolute; top:0; left:0; width:100%; height:100%; border:0;"
-            allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen loading="lazy"></iframe>
+            allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen loading="lazy"
+            onload="applyYTPlaybackRate('${iframeId}')"></iframe>
     </div>`;
 };
 
 window.loadYTEmbedAtTime = function (key, thumbId, startSecs) {
     const container = document.getElementById(thumbId);
     if (!container) return;
+    const iframeId = `yt-iframe-${thumbId}`;
     container.outerHTML = `<div style="position:relative; padding-bottom:56.25%; height:0; overflow:hidden; border-radius:8px;">
-        <iframe src="https://www.youtube-nocookie.com/embed/${key}?autoplay=1&start=${Math.floor(startSecs)}"
+        <iframe id="${iframeId}" data-yt="1" src="https://www.youtube-nocookie.com/embed/${key}?autoplay=1&enablejsapi=1&start=${Math.floor(startSecs)}"
             style="position:absolute; top:0; left:0; width:100%; height:100%; border:0;"
-            allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen loading="lazy"></iframe>
+            allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen loading="lazy"
+            onload="applyYTPlaybackRate('${iframeId}')"></iframe>
     </div>`;
 };
 
@@ -4237,7 +4285,7 @@ async function renderAtAGlance() {
 
     // ── Ranking points from match history ────────────────────────────────────
     const rpMap = {};
-    const playedMatches = allMatches.filter(m => (m.redScore ?? -1) >= 0);
+    const playedMatches = allMatches.filter(m => (m.redScore ?? -1) >= 0 && (!m.compLevel || m.compLevel === 'qm'));
     let hasBreakdown = false;
 
     for (const m of playedMatches) {
@@ -8032,7 +8080,7 @@ async function renderPickList() {
 
     // RP totals
     const rpMap = {};
-    const playedMatches = allMatches.filter(m => (m.redScore ?? -1) >= 0);
+    const playedMatches = allMatches.filter(m => (m.redScore ?? -1) >= 0 && (!m.compLevel || m.compLevel === 'qm'));
     for (const m of playedMatches) {
         const redWon = m.redScore > m.blueScore, blueWon = m.blueScore > m.redScore, tie = m.redScore === m.blueScore;
         const bonusRP = bd => bd ? ((bd.energizedAchieved ? 1 : 0) + (bd.superchargedAchieved ? 1 : 0) + (bd.traversalAchieved ? 1 : 0)) : 0;
@@ -10601,8 +10649,9 @@ async function renderTBADetail(teamNumber, tbaTeam) {
 
     const teamMatches = allMatches
         .filter(m =>
-            (m.red || []).map(String).includes(teamNumStr) ||
-            (m.blue || []).map(String).includes(teamNumStr))
+            (!m.compLevel || m.compLevel === 'qm') &&
+            ((m.red || []).map(String).includes(teamNumStr) ||
+             (m.blue || []).map(String).includes(teamNumStr)))
         .sort((a, b) => a.matchNumber - b.matchNumber);
 
     // OPR profile stat grid
