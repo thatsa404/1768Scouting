@@ -160,15 +160,14 @@ async function applyNexusEventData(data) {
         const isQueuing = label === data.nowQueuing;
         nexusMatchCache[dbKey] = { status, isQueuing };
 
-        // Update predicted time if Nexus has a better estimate (>30s drift)
+        // Nexus estimated time overrides predictedTime for unplayed matches.
+        // Once TBA sets actualTime (post-match), that is treated as truth.
         const estMs = nm.times?.estimatedStartTime;
         if (estMs && estMs > 0) {
             const estSec = Math.floor(estMs / 1000);
             const dbMatch = await db.matches.get(dbKey);
-            if (dbMatch && (dbMatch.redScore ?? -1) < 0) {
-                if (!dbMatch.predictedTime || Math.abs(estSec - dbMatch.predictedTime) > 30) {
-                    updates.push(db.matches.update(dbKey, { predictedTime: estSec }));
-                }
+            if (dbMatch && (dbMatch.redScore ?? -1) < 0 && !dbMatch.actualTime) {
+                updates.push(db.matches.update(dbKey, { predictedTime: estSec }));
             }
         }
     }
@@ -1434,7 +1433,7 @@ window.viewMatchDetail = async function (matchKey) {
         const stream = findStreamForMatch(match, webcasts);
         if (stream) {
             const matchTs = match.actualTime ?? match.predictedTime;
-            const offset = Math.max(0, matchTs - stream.startTimestamp - 20);
+            const offset = Math.max(0, matchTs - stream.startTimestamp - 2);
             const thumbId = 'stream-seek-thumb';
             videoSection.innerHTML = ytSpeedBar() + `
                 <div style="color:#64748b;font-size:0.78em;font-style:italic;margin-bottom:6px;">No match video yet — live stream seeked to approx. match time</div>
