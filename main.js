@@ -2669,8 +2669,13 @@ async function importArchiveBundle(data, eventKey) {
             if (data.nexusConfig.relayUrl)          localStorage.setItem('nexusRelayUrl', data.nexusConfig.relayUrl);
             if (data.nexusConfig.enabled != null)   localStorage.setItem('nexusEnabled', data.nexusConfig.enabled);
             if (data.nexusConfig.eventKeyOverride)  localStorage.setItem('nexusEventKeyOverride', data.nexusConfig.eventKeyOverride);
+            const urlIn = document.getElementById('nexusRelayUrlInput');
+            if (urlIn) urlIn.value = data.nexusConfig.relayUrl || '';
+            const keyIn = document.getElementById('nexusEventKeyOverride');
+            if (keyIn) keyIn.value = data.nexusConfig.eventKeyOverride || '';
+            updateNexusUI();
         }
-        if (data.localEpaEnabled != null) localStorage.setItem('localEpaEnabled', data.localEpaEnabled);
+        if (data.localEpaEnabled != null) { localStorage.setItem('localEpaEnabled', data.localEpaEnabled); updateLocalEpaUI(); }
 
         _recordLocalArchive(eventKey, data.archiveType);
         const scoutCount = data.scoutingRows?.length || 0;
@@ -3399,6 +3404,9 @@ async function _silentClearEvent(eventKey) {
     localStorage.removeItem(`webcasts_${eventKey}`);
     localStorage.removeItem(`eventNotes_${eventKey}`);
 
+    localStorage.setItem('nexusEnabled', 'false');
+    localStorage.removeItem('nexusEventKeyOverride');
+
     _bannerMatchTime = null;
     const _cb = document.getElementById('match-countdown-banner');
     if (_cb) _cb.style.display = 'none';
@@ -3436,6 +3444,10 @@ window.clearEvent = async function () {
         const keyInput = document.getElementById('eventKeyInput');
         if (keyInput) keyInput.value = '';
         updateAppEventKey(null);
+
+        const nexusKeyInput = document.getElementById('nexusEventKeyOverride');
+        if (nexusKeyInput) nexusKeyInput.value = '';
+        updateNexusUI();
     } catch (err) {
         console.error('Error clearing event:', err);
         alert('Failed to clear event data. Check console for details.');
