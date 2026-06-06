@@ -7733,6 +7733,14 @@ function renderNotesTab() {
     if (!container) return;
     const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
     const showAll  = container.dataset.mode !== 'user';
+    const query    = (container.dataset.search || '').trim().toLowerCase();
+
+    const hlText = (rawText, q) => {
+        const escaped = String(rawText).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+        if (!q) return escaped;
+        const escapedQ = q.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return escaped.replace(new RegExp(`(${escapedQ})`, 'gi'), '<mark style="background:#854d0e;color:#fef08a;border-radius:2px;padding:0 1px;">$1</mark>');
+    };
 
     // User-created team notes
     const userNotes = [];
@@ -7764,6 +7772,18 @@ function renderNotesTab() {
     const totalUser = userNotes.length + eventNotes.length;
     const totalAll  = totalUser + scoutNotes.length;
 
+    // Filter by search query
+    const matchNote = (n) => {
+        if (!query) return true;
+        if (n.text?.toLowerCase().includes(query)) return true;
+        if (String(n.teamNumber ?? '').includes(query)) return true;
+        return false;
+    };
+    const filteredUser   = userNotes.filter(matchNote);
+    const filteredEvent  = eventNotes.filter(matchNote);
+    const filteredScout  = scoutNotes.filter(matchNote);
+    const filteredTotal  = filteredUser.length + filteredEvent.length + filteredScout.length;
+
     // Group all notes by team; '__none__' = no team
     const teamMap = new Map();
     const addNote = (n) => {
@@ -7771,9 +7791,9 @@ function renderNotesTab() {
         if (!teamMap.has(key)) teamMap.set(key, []);
         teamMap.get(key).push(n);
     };
-    userNotes.forEach(addNote);
-    scoutNotes.forEach(addNote);   // merged under same team in all-mode
-    eventNotes.forEach(addNote);   // goes to '__none__'
+    filteredUser.forEach(addNote);
+    filteredScout.forEach(addNote);   // merged under same team in all-mode
+    filteredEvent.forEach(addNote);   // goes to '__none__'
 
     // Within each team: user notes first, then sheet, sorted by match number
     for (const notes of teamMap.values()) {
@@ -7806,7 +7826,7 @@ function renderNotesTab() {
         return `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:10px 14px;${i > 0 ? 'border-top:1px solid #0f172a;' : ''}">
             <div style="min-width:0;flex:1;">
                 ${matchLabel ? `<span style="color:${accent};font-size:0.76em;font-weight:700;margin-right:8px;">${matchLabel}</span>` : ''}
-                <span style="color:#cbd5e1;font-size:0.88em;line-height:1.55;white-space:pre-wrap;word-break:break-word;">${n.text.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</span>
+                <span style="color:#cbd5e1;font-size:0.88em;line-height:1.55;white-space:pre-wrap;word-break:break-word;">${hlText(n.text, query)}</span>
             </div>
             <div style="display:flex;gap:5px;flex-shrink:0;align-items:center;padding-top:1px;">
                 ${n.source === 'scouting' ? `<span style="color:#475569;font-size:0.72em;background:#0f172a;border-radius:4px;padding:2px 6px;">Sheet</span>` : ''}
@@ -7836,7 +7856,9 @@ function renderNotesTab() {
         </details>`;
     };
 
-    const emptyState = `<div style="background:#1e293b;padding:20px 16px;border-radius:8px;border:1px dashed #334155;text-align:center;color:#475569;font-size:0.88em;">No notes yet. Use <strong style="color:#94a3b8;">+ Add Note</strong> to create one.</div>`;
+    const emptyState = query
+        ? `<div style="background:#1e293b;padding:20px 16px;border-radius:8px;border:1px dashed #334155;text-align:center;color:#475569;font-size:0.88em;">No notes match <strong style="color:#94a3b8;">"${query.replace(/&/g,'&amp;')}"</strong>.</div>`
+        : `<div style="background:#1e293b;padding:20px 16px;border-radius:8px;border:1px dashed #334155;text-align:center;color:#475569;font-size:0.88em;">No notes yet. Use <strong style="color:#94a3b8;">+ Add Note</strong> to create one.</div>`;
 
     const bulkBtns = sortedKeys.length > 1
         ? `<div style="display:flex;gap:6px;">
@@ -7845,8 +7867,12 @@ function renderNotesTab() {
            </div>`
         : '';
 
+    const resultHint = query
+        ? `<span style="color:#64748b;font-size:0.82em;white-space:nowrap;">${filteredTotal} result${filteredTotal !== 1 ? 's' : ''}</span>`
+        : '';
+
     container.innerHTML = `
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
             <button onclick="showNoteEditorModal()" style="background:#1e3a5f;color:#60a5fa;border:1px solid #3b82f6;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer;white-space:nowrap;">+ Add Note</button>
             <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
                 ${modeBtn('all',  'All Notes',  totalAll)}
@@ -7854,7 +7880,18 @@ function renderNotesTab() {
                 ${bulkBtns}
             </div>
         </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+            <input id="notes-search-input" type="search" value="${query.replace(/&/g,'&amp;')}" placeholder="Search notes…"
+                oninput="filterNotes(this.value)"
+                style="flex:1;background:#1e293b;color:#f8fafc;border:1px solid #334155;border-radius:6px;padding:8px 12px;font-size:0.88em;outline:none;box-sizing:border-box;">
+            ${resultHint}
+        </div>
         ${sortedKeys.length ? sortedKeys.map(k => teamSection(k, teamMap.get(k))).join('') : emptyState}`;
+
+    if (query) {
+        const si = container.querySelector('#notes-search-input');
+        if (si) { si.focus(); si.setSelectionRange(si.value.length, si.value.length); }
+    }
 }
 
 window.collapseAllNotes = function () {
@@ -7868,6 +7905,11 @@ window.setNotesMode = function (mode) {
     const c = document.getElementById('scouting-notes-content');
     if (c) c.dataset.mode = mode;
     renderNotesTab();
+};
+
+window.filterNotes = function (value) {
+    const c = document.getElementById('scouting-notes-content');
+    if (c) { c.dataset.search = value; renderNotesTab(); }
 };
 
 window.showNoteEditorModal = function (opts = {}) {
