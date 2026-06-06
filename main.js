@@ -5549,22 +5549,65 @@ function wlEventAvgOPR(tbaMap) {
     return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : 30;
 }
 
-// Best available single-number contribution estimate for one team.
-// oprWeight (0–1) blends EPA→OPR as more matches are played; both are used when available.
-// Adjusted OPR (for teams with individually ignored matches) always takes priority.
-function wlPredictedContribution(tn, tbaMap, teamsMap, avg, oprWeight = 1) {
-    const tba    = tbaMap[parseInt(tn)];
-    const stat   = teamsMap[parseInt(tn)];
-    const hasAdj = tba && getTeamIgnoredKeys(tba).length > 0 && tba.adjustedOPR != null;
-    if (hasAdj) return tba.adjustedOPR;
-    const opr = tba?.opr   ?? null;
-    const epa = stat?.currentEPA ?? null;
-    if (opr != null && epa != null) return oprWeight * opr + (1 - oprWeight) * epa;
-    return opr ?? epa ?? avg;
+// Standard deviation of an array (sample, N-1 denominator).
+function wlStd(arr) {
+    if (arr.length < 2) return Infinity;
+    const mean = arr.reduce((s, v) => s + v, 0) / arr.length;
+    return Math.sqrt(arr.reduce((s, v) => s + (v - mean) ** 2, 0) / (arr.length - 1));
 }
 
-function wlAlliancePredictedScore(teams, tbaMap, teamsMap, avg, oprWeight = 1) {
-    return (teams ?? []).reduce((s, tn) => s + (wlPredictedContribution(tn, tbaMap, teamsMap, avg, oprWeight) ?? avg), 0);
+// Compute all fusion intermediate values for one team — shared by predictor and debug tool.
+// Returns: { epa, opr, sigmaEpaEst, sigmaEpaGen, sigmaEpa, sigmaOpr, fused, oprWeightPct, hasAdj }
+function wlTeamFusionStats(tn, tbaMap, teamsMap, oprSigmaRel) {
+    const tba    = tbaMap[parseInt(tn)];
+    const stat   = teamsMap[parseInt(tn)];
+    const hasAdj = !!(tba && getTeamIgnoredKeys(tba).length > 0 && tba.adjustedOPR != null);
+    const opr    = hasAdj ? tba.adjustedOPR : (tba?.opr ?? null);
+    const epa    = stat?.currentEPA ?? null;
+
+    const epaSd       = stat?.epa?.total_points?.sd ?? (epa != null ? 0.15 * Math.abs(epa) : 0);
+    const matchCount  = Math.max(1, stat?.matchCount ?? 1);
+    const sigmaEpaEst = epaSd / Math.sqrt(matchCount);
+    const sigmaEpaGen = epa != null ? 0.12 * Math.abs(epa) : 0;
+    const sigmaEpa    = Math.sqrt(sigmaEpaEst ** 2 + sigmaEpaGen ** 2);
+    const sigmaOpr    = (isFinite(oprSigmaRel) && opr != null) ? oprSigmaRel * Math.abs(opr) : Infinity;
+
+    let fused, oprWeightPct;
+    if (opr == null && epa == null) {
+        fused = null; oprWeightPct = null;
+    } else if (opr == null || hasAdj) {
+        fused = opr ?? epa; oprWeightPct = opr != null ? 100 : 0;
+    } else if (epa == null) {
+        fused = opr; oprWeightPct = 100;
+    } else if (!isFinite(sigmaOpr) || sigmaOpr <= 0) {
+        fused = epa; oprWeightPct = 0;
+    } else if (sigmaEpa <= 0) {
+        fused = opr; oprWeightPct = 100;
+    } else {
+        const wEpa = 1 / (sigmaEpa ** 2);
+        const wOpr = 1 / (sigmaOpr ** 2);
+        fused = (wEpa * epa + wOpr * opr) / (wEpa + wOpr);
+        oprWeightPct = wOpr / (wEpa + wOpr) * 100;
+    }
+
+    return { tn: parseInt(tn), epa, opr, sigmaEpaEst, sigmaEpaGen, sigmaEpa, sigmaOpr, fused, oprWeightPct, hasAdj };
+}
+
+// Inverse-variance fusion of EPA and OPR for one team.
+// oprSigmaRel: coefficient of variation of OPR predictions derived from event residuals.
+//   Infinity (no residuals yet) → weight collapses to zero → pure EPA.
+//   As residuals accumulate, OPR earns weight proportional to its precision.
+// EPA uncertainty = √(σ_estimation² + σ_generalization²):
+//   σ_estimation = epa.sd / √matchCount (shrinks with more historical matches)
+//   σ_generalization = 12% of EPA (floor: even perfect estimation leaves event-to-event drift)
+// Adjusted OPR (for ignored-match teams) always takes priority.
+function wlPredictedContribution(tn, tbaMap, teamsMap, avg, oprSigmaRel = Infinity) {
+    const stats = wlTeamFusionStats(tn, tbaMap, teamsMap, oprSigmaRel);
+    return stats.fused ?? avg;
+}
+
+function wlAlliancePredictedScore(teams, tbaMap, teamsMap, avg, oprSigmaRel = Infinity) {
+    return (teams ?? []).reduce((s, tn) => s + (wlPredictedContribution(tn, tbaMap, teamsMap, avg, oprSigmaRel) ?? avg), 0);
 }
 
 // Box-Muller standard normal sample.
@@ -5608,21 +5651,19 @@ function wlBuildDiffPool(diffResiduals, redTeams, blueTeams, teamsMap, redPred, 
 
 // Relative residuals: (actualScore − predicted) / predicted, one per alliance per played match.
 // Differential residuals: (actualRed − actualBlue) − (predRed − predBlue), in absolute points.
-// oprWeight at match i uses the count of matches played *before* match i, so residuals are
-// computed with the same blend the model would have used when predicting that match.
+// Uses the same inverse-variance fusion as wlPredictedContribution: oprSigmaRel at match i is
+// derived from residuals accumulated *before* match i, keeping predictions self-consistent.
 function wlCollectResiduals(playedMatches, tbaMap, teamsMap) {
-    const avg = wlEventAvgOPR(tbaMap);
+    const avg     = wlEventAvgOPR(tbaMap);
     const relRes  = [];
     const diffRes = [];
-    for (let i = 0; i < playedMatches.length; i++) {
-        const m = playedMatches[i];
+    for (const m of playedMatches) {
         if ((m.redScore ?? -1) < 0) continue;
-        const oprWeight = Math.min(1, i / 30);   // weight at time of this match
-        const rp = wlAlliancePredictedScore(m.red,  tbaMap, teamsMap, avg, oprWeight);
-        const bp = wlAlliancePredictedScore(m.blue, tbaMap, teamsMap, avg, oprWeight);
+        const oprSigmaRel = wlStd(relRes);   // Infinity until ≥2 residuals exist
+        const rp = wlAlliancePredictedScore(m.red,  tbaMap, teamsMap, avg, oprSigmaRel);
+        const bp = wlAlliancePredictedScore(m.blue, tbaMap, teamsMap, avg, oprSigmaRel);
         if (rp > 0) relRes.push((m.redScore  - rp) / rp);
         if (bp > 0) relRes.push((m.blueScore - bp) / bp);
-        // Absolute differential residual — captures match-level shared noise.
         diffRes.push((m.redScore - m.blueScore) - (rp - bp));
     }
     return { relResiduals: relRes, diffResiduals: diffRes };
@@ -5684,10 +5725,10 @@ function wlSample(arr) {
 // Win probability uses differential residuals so shared match-level noise is captured; RP
 // probability uses per-alliance relative residuals since RP thresholds are per-alliance.
 function wlSimulateMatch(match, tbaMap, teamsMap, allTeamNums, relResiduals, diffResiduals, gameConfig, effectiveThresholds, playedMatches, fuelOPRCache, N = 500) {
-    const avg       = wlEventAvgOPR(tbaMap);
-    const oprWeight = Math.min(1, playedMatches.length / 30);
-    const redPred   = wlAlliancePredictedScore(match.red,  tbaMap, teamsMap, avg, oprWeight);
-    const bluePred  = wlAlliancePredictedScore(match.blue, tbaMap, teamsMap, avg, oprWeight);
+    const avg         = wlEventAvgOPR(tbaMap);
+    const oprSigmaRel = wlStd(relResiduals);   // Infinity pre-event → pure EPA until OPR validated
+    const redPred     = wlAlliancePredictedScore(match.red,  tbaMap, teamsMap, avg, oprSigmaRel);
+    const bluePred    = wlAlliancePredictedScore(match.blue, tbaMap, teamsMap, avg, oprSigmaRel);
 
     // Differential pool for win probability — models the score margin, not each alliance in isolation.
     const diffPool = wlBuildDiffPool(diffResiduals, match.red, match.blue, teamsMap, redPred, bluePred);
@@ -8887,6 +8928,287 @@ window.draftPick = function (teamNumber) {
     renderDraft();
 };
 
+window.refreshLocalEPADebug = async function () {
+    const el = document.getElementById('local-epa-debug-content');
+    if (!el) return;
+    el.innerHTML = `<div style="color:#64748b;font-size:0.85em;">Computing…</div>`;
+
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    if (!eventKey) { el.innerHTML = `<div style="color:#64748b;font-size:0.85em;">No event key set.</div>`; return; }
+
+    const [teams, matches] = await Promise.all([
+        db.teams.where('eventKey').equals(eventKey).toArray(),
+        db.matches.where('eventKey').equals(eventKey).toArray(),
+    ]);
+    if (!teams.length) { el.innerHTML = `<div style="color:#64748b;font-size:0.85em;">No teams for ${eventKey}.</div>`; return; }
+
+    // Partition: local vs statbotics (same logic as computeLocalEPA)
+    const sbTeams = [], localTeams = [];
+    for (const t of teams) {
+        const sbEventMatches = (t.rawStatboticsData || [])
+            .filter(m => m.event === eventKey && m.epa?.post)
+            .sort((a, b) => (a.time || 0) - (b.time || 0));
+        if (sbEventMatches.length > 0) {
+            sbTeams.push({ ...t, _sbLastEPA: sbEventMatches[sbEventMatches.length - 1].epa.post });
+        } else {
+            localTeams.push(t);
+        }
+    }
+
+    const played = matches
+        .filter(m => (m.redScore ?? -1) >= 0 && (m.blueScore ?? -1) >= 0)
+        .sort((a, b) => (a.actualTime || a.predictedTime || 0) - (b.actualTime || b.predictedTime || 0));
+
+    // Replay computation, capturing debug info per team per match
+    const epaState = {};
+    const debugLog = {};  // tn -> [{matchLabel, n, K, predAlliance, actual, errorPerTeam, delta}]
+
+    for (const t of localTeams) {
+        const careerN = (t.rawStatboticsData || []).filter(m => m.epa?.post).length;
+        epaState[t.teamNumber] = {
+            current: t.preEventEPA ?? t.currentEPA ?? 0,
+            auto:    t.preEventAutoEPA ?? t.autoEPA ?? 0,
+            endgame: t.preEventEndgameEPA ?? t.endgameEPA ?? 0,
+            n: careerN,
+            careerN,
+            preEventEPA: t.preEventEPA ?? t.currentEPA ?? 0,
+        };
+        debugLog[t.teamNumber] = [];
+    }
+    const getE = tn => epaState[tn];
+
+    for (const m of played) {
+        const label = (!m.compLevel || m.compLevel === 'qm') ? `Q${m.matchNumber}` : `P${m.matchNumber}`;
+        for (const [alliance, score, bd] of [
+            [m.red  || [], m.redScore,  m.redBreakdown],
+            [m.blue || [], m.blueScore, m.blueBreakdown],
+        ]) {
+            const members = alliance.map(t => String(t).replace(/^frc/i, ''))
+                .filter(t => epaState[t]);
+            if (!members.length) continue;
+            const predTotal = members.reduce((s, t) => s + getE(t).current, 0);
+            const N = members.length;
+            for (const t of members) {
+                const e = getE(t);
+                e.n++;
+                const prev = Math.min(0.5, Math.max(0.3, 0.5 - (0.2 / 6) * (e.n - 6)));
+                const K = (2 / 3) * prev;
+                const errorPerTeam = (score - predTotal) / N;
+                const delta = K * errorPerTeam;
+                debugLog[t].push({
+                    label, n: e.n, K, predAlliance: predTotal, actual: score, errorPerTeam, delta,
+                    epaBefore: e.current,
+                });
+                e.current += delta;
+                const autoActual    = bd?.totalAutoPoints ?? null;
+                const endgameActual = bd ? ((bd.endGameTowerPoints || 0) + (bd['Hub Endgame Fuel Count'] || 0)) : null;
+                if (autoActual    != null) e.auto    += K * (autoActual    - members.reduce((s, t2) => s + getE(t2).auto,    0)) / N;
+                if (endgameActual != null) e.endgame += K * (endgameActual - members.reduce((s, t2) => s + getE(t2).endgame, 0)) / N;
+            }
+        }
+    }
+
+    const fmtNum = (v, d = 1) => v != null && isFinite(v) ? v.toFixed(d) : '—';
+    const sign = v => v >= 0 ? `+${v.toFixed(2)}` : v.toFixed(2);
+    const deltaColor = v => v > 1 ? '#4ade80' : v < -1 ? '#f87171' : '#94a3b8';
+
+    const kBar = (K) => {
+        const pct = Math.round((K / 0.333) * 100);
+        const color = K >= 0.32 ? '#4ade80' : K >= 0.25 ? '#fbbf24' : '#f87171';
+        return `<div style="display:inline-flex;align-items:center;gap:4px;">
+            <div style="width:32px;height:7px;background:#1e293b;border-radius:3px;overflow:hidden;">
+                <div style="width:${pct}%;height:100%;background:${color};border-radius:3px;"></div>
+            </div>
+            <span style="font-size:0.78em;color:${color};">${K.toFixed(3)}</span>
+        </div>`;
+    };
+
+    const teamSections = localTeams.map(t => {
+        const tn = t.teamNumber;
+        const e  = epaState[tn];
+        const log = debugLog[tn] || [];
+        const finalEPA = e?.current ?? null;
+        const preEPA   = e?.preEventEPA ?? null;
+        const delta    = (finalEPA != null && preEPA != null) ? finalEPA - preEPA : null;
+        const kValues  = log.map(r => r.K);
+        const kMin = kValues.length ? Math.min(...kValues) : null;
+        const kMax = kValues.length ? Math.max(...kValues) : null;
+        const careerN  = e?.careerN ?? 0;
+
+        const matchRows = log.map(r => `
+            <tr style="border-bottom:1px solid #0f172a;">
+                <td style="padding:4px 8px;color:#94a3b8;font-size:0.82em;">${r.label}</td>
+                <td style="padding:4px 8px;text-align:right;color:#64748b;font-size:0.82em;">${r.n}</td>
+                <td style="padding:4px 8px;">${kBar(r.K)}</td>
+                <td style="padding:4px 8px;text-align:right;color:#94a3b8;font-size:0.82em;">${fmtNum(r.predAlliance)}</td>
+                <td style="padding:4px 8px;text-align:right;color:#e2e8f0;font-size:0.82em;">${fmtNum(r.actual)}</td>
+                <td style="padding:4px 8px;text-align:right;color:${deltaColor(r.errorPerTeam)};font-size:0.82em;">${sign(r.errorPerTeam)}</td>
+                <td style="padding:4px 8px;text-align:right;font-size:0.82em;">
+                    <span style="color:${deltaColor(r.delta)};">${sign(r.delta)}</span>
+                    <span style="color:#334155;font-size:0.8em;margin-left:3px;">${fmtNum(r.epaBefore + r.delta)}</span>
+                </td>
+            </tr>`).join('');
+
+        const kRangeStr = kValues.length === 0 ? '—'
+            : kMin === kMax ? kMax.toFixed(3)
+            : `${kMin.toFixed(3)} – ${kMax.toFixed(3)}`;
+
+        return `
+        <details style="background:#1e293b;border-radius:6px;margin-bottom:6px;border:1px solid #334155;overflow:hidden;">
+            <summary style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;background:#162032;cursor:pointer;user-select:none;">
+                <span style="color:#f1f5f9;font-weight:700;min-width:52px;">${tn}</span>
+                <span style="color:#64748b;font-size:0.78em;">career N: ${careerN}</span>
+                <span style="color:#64748b;font-size:0.78em;">${log.length} event match${log.length !== 1 ? 'es' : ''}</span>
+                <span style="color:#64748b;font-size:0.78em;">K: ${kRangeStr}</span>
+                <span style="margin-left:auto;display:flex;gap:10px;align-items:center;">
+                    <span style="font-size:0.82em;color:#94a3b8;">Pre: ${fmtNum(preEPA)}</span>
+                    <span style="font-size:0.82em;color:#60a5fa;font-weight:600;">Now: ${fmtNum(finalEPA)}</span>
+                    ${delta != null ? `<span style="font-size:0.82em;color:${deltaColor(delta)};font-weight:600;">${sign(delta)}</span>` : ''}
+                </span>
+            </summary>
+            ${log.length ? `
+            <div style="overflow-x:auto;">
+            <table style="border-collapse:collapse;width:100%;">
+                <thead><tr style="color:#475569;font-size:0.75em;border-bottom:1px solid #334155;">
+                    <th style="padding:4px 8px;text-align:left;">Match</th>
+                    <th style="padding:4px 8px;text-align:right;">n</th>
+                    <th style="padding:4px 8px;text-align:left;">K</th>
+                    <th style="padding:4px 8px;text-align:right;">Pred</th>
+                    <th style="padding:4px 8px;text-align:right;">Actual</th>
+                    <th style="padding:4px 8px;text-align:right;">Err/team</th>
+                    <th style="padding:4px 8px;text-align:right;">ΔEPA → new</th>
+                </tr></thead>
+                <tbody>${matchRows}</tbody>
+            </table>
+            </div>` : `<div style="padding:10px 12px;color:#475569;font-size:0.82em;">No scored matches yet.</div>`}
+        </details>`;
+    }).join('');
+
+    const sbNote = sbTeams.length
+        ? `<div style="color:#64748b;font-size:0.82em;margin-top:10px;padding:8px 12px;background:#0f172a;border-radius:6px;border:1px solid #1e293b;">
+               ${sbTeams.length} team${sbTeams.length !== 1 ? 's' : ''} using Statbotics event data (not estimated locally):
+               ${sbTeams.map(t => `<span style="color:#475569;">${t.teamNumber}</span>`).join(', ')}
+           </div>`
+        : '';
+
+    const summary = `
+        <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;font-size:0.82em;color:#94a3b8;">
+            <span>Local EPA: <strong style="color:#4ade80;">${localTeams.length} teams</strong></span>
+            <span>Statbotics: <strong style="color:#60a5fa;">${sbTeams.length} teams</strong></span>
+            <span>Played matches: <strong style="color:#e2e8f0;">${played.length}</strong></span>
+        </div>`;
+
+    el.innerHTML = summary
+        + (localTeams.length ? teamSections : `<div style="color:#64748b;font-size:0.85em;">All teams have Statbotics event data — local estimation not active.</div>`)
+        + sbNote;
+};
+
+window.refreshFusionDebug = async function () {
+    const el = document.getElementById('fusion-debug-content');
+    if (!el) return;
+    el.innerHTML = `<div style="color:#64748b;font-size:0.85em;">Computing…</div>`;
+
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    if (!eventKey) { el.innerHTML = `<div style="color:#64748b;font-size:0.85em;">No event key set.</div>`; return; }
+
+    const [allTeamsArr, tbaTeamsArr, matchesArr] = await Promise.all([
+        db.teams.where('eventKey').equals(eventKey).toArray(),
+        db.tbaTeams.toArray(),
+        db.matches.where('eventKey').equals(eventKey).toArray(),
+    ]);
+    if (!allTeamsArr.length && !tbaTeamsArr.length) {
+        el.innerHTML = `<div style="color:#64748b;font-size:0.85em;">No data for ${eventKey}.</div>`; return;
+    }
+
+    const teamsMap = Object.fromEntries(allTeamsArr.map(t => [t.teamNumber, t]));
+    const tbaMap   = Object.fromEntries(tbaTeamsArr.map(t => [t.teamNumber, t]));
+    const played   = matchesArr.filter(m => (m.redScore ?? -1) >= 0);
+    const { relResiduals } = wlCollectResiduals(played, tbaMap, teamsMap);
+    const oprSigmaRel = wlStd(relResiduals);
+
+    // Event-level summary
+    const meanAbsRes = relResiduals.length
+        ? (relResiduals.reduce((s, v) => s + Math.abs(v), 0) / relResiduals.length * 100).toFixed(1)
+        : null;
+    const eventSummary = `
+        <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;font-size:0.82em;color:#94a3b8;">
+            <span>Residuals: <strong style="color:#e2e8f0;">${relResiduals.length}</strong></span>
+            <span>OPR CV: <strong style="color:${isFinite(oprSigmaRel) ? '#4ade80' : '#f87171'};">${isFinite(oprSigmaRel) ? (oprSigmaRel * 100).toFixed(1) + '%' : '— (no data)'}</strong></span>
+            ${meanAbsRes != null ? `<span>Mean |residual|: <strong style="color:#e2e8f0;">${meanAbsRes}%</strong></span>` : ''}
+            <span>Played matches: <strong style="color:#e2e8f0;">${played.length}</strong></span>
+        </div>`;
+
+    // Collect all team numbers (union of EPA + OPR)
+    const allTNs = new Set([
+        ...allTeamsArr.map(t => t.teamNumber),
+        ...tbaTeamsArr.map(t => t.teamNumber),
+    ]);
+
+    const rows = [...allTNs].map(tn => wlTeamFusionStats(tn, tbaMap, teamsMap, oprSigmaRel))
+        .filter(r => r.fused != null)
+        .sort((a, b) => (b.fused ?? 0) - (a.fused ?? 0));
+
+    const fmtNum = (v, d = 1) => v != null ? v.toFixed(d) : '—';
+    const bar = (pct) => {
+        if (pct == null) return '—';
+        const w = Math.round(pct);
+        const color = pct >= 60 ? '#4ade80' : pct >= 25 ? '#fbbf24' : '#60a5fa';
+        return `<div style="display:flex;align-items:center;gap:5px;">
+            <div style="flex:1;height:8px;background:#1e293b;border-radius:4px;overflow:hidden;min-width:40px;">
+                <div style="width:${w}%;height:100%;background:${color};border-radius:4px;"></div>
+            </div>
+            <span style="font-size:0.78em;color:#94a3b8;min-width:28px;text-align:right;">${w}%</span>
+        </div>`;
+    };
+
+    const th = (label, title = '') =>
+        `<th title="${title}" style="padding:5px 8px;text-align:right;color:#475569;font-size:0.75em;font-weight:600;white-space:nowrap;border-bottom:1px solid #334155;">${label}</th>`;
+    const thL = (label) =>
+        `<th style="padding:5px 8px;text-align:left;color:#475569;font-size:0.75em;font-weight:600;border-bottom:1px solid #334155;">${label}</th>`;
+    const td = (v, color = '#cbd5e1') =>
+        `<td style="padding:5px 8px;text-align:right;color:${color};font-size:0.82em;white-space:nowrap;">${v}</td>`;
+    const tdL = (v) =>
+        `<td style="padding:5px 8px;text-align:left;font-size:0.82em;">${v}</td>`;
+
+    const tableRows = rows.map(r => {
+        const adjBadge = r.hasAdj ? `<span style="font-size:0.7em;color:#fbbf24;margin-left:3px;">ADJ</span>` : '';
+        const sigmaEpaStr = r.sigmaEpa != null
+            ? `${fmtNum(r.sigmaEpa)} <span style="color:#475569;font-size:0.75em;">(${fmtNum(r.sigmaEpaEst)}/${fmtNum(r.sigmaEpaGen)})</span>`
+            : '—';
+        const sigmaOprStr = isFinite(r.sigmaOpr) ? fmtNum(r.sigmaOpr) : '<span style="color:#475569;">∞</span>';
+        return `<tr style="border-bottom:1px solid #0f172a;">
+            ${tdL(`<span style="color:#f1f5f9;font-weight:600;">${r.tn}</span>${adjBadge}`)}
+            ${td(fmtNum(r.epa))}
+            ${td(sigmaEpaStr, '#94a3b8')}
+            ${td(fmtNum(r.opr))}
+            ${td(sigmaOprStr, '#94a3b8')}
+            ${td(`<strong style="color:#60a5fa;">${fmtNum(r.fused)}</strong>`)}
+            <td style="padding:5px 8px;min-width:90px;">${bar(r.oprWeightPct)}</td>
+        </tr>`;
+    }).join('');
+
+    el.innerHTML = eventSummary + `
+        <div style="overflow-x:auto;">
+        <table style="border-collapse:collapse;width:100%;font-size:0.85em;">
+            <thead><tr>
+                ${thL('Team')}
+                ${th('EPA', 'Statbotics current EPA')}
+                ${th('σ_EPA (est/gen)', 'EPA uncertainty: √(σ_est² + σ_gen²). est = SD/√matchCount, gen = 12% floor')}
+                ${th('OPR', 'TBA OPR (or adjusted OPR if active)')}
+                ${th('σ_OPR', 'OPR uncertainty: OPR × CV(relResiduals). ∞ = no event residuals yet')}
+                ${th('Fused', 'Inverse-variance weighted estimate')}
+                ${th('OPR wt', 'OPR share of total weight')}
+            </tr></thead>
+            <tbody>${tableRows}</tbody>
+        </table>
+        </div>
+        <p style="color:#334155;font-size:0.75em;margin-top:10px;line-height:1.5;">
+            σ_EPA = √(σ_est² + σ_gen²) where σ_est = SD/√N and σ_gen = 12% EPA.
+            σ_OPR = CV × |OPR| where CV = std(relative residuals on played matches).
+            Weight = 1/σ². OPR wt% = 0 pre-event, grows as residuals accumulate.
+        </p>`;
+};
+
 async function renderDevTab() {
     const el = document.getElementById('tools-tab-dev');
     if (!el) return;
@@ -9177,7 +9499,31 @@ async function renderDevTab() {
             </div>
         </details>`;
 
-    el.innerHTML = `<div style="padding:12px;">${quipTierHtml}${wlControlsHtml}${calibrationHtml}${notifTesterHtml}${streamSeekTestHtml}${fieldExplorerHtml}${timeMachineHtml}</div>`;
+    const fusionDebugHtml = `
+        <details style="margin-bottom:16px;border:1px solid #1e293b;border-radius:8px;overflow:hidden;"
+                 ontoggle="if(this.open) refreshFusionDebug()">
+            <summary style="cursor:pointer;color:#e2e8f0;font-weight:700;padding:10px 14px;background:#0f172a;font-size:1em;letter-spacing:0.02em;">
+                EPA/OPR Fusion Debug
+                <span style="color:#475569;font-weight:400;font-size:0.82em;margin-left:8px;">per-team σ &amp; weights</span>
+            </summary>
+            <div id="fusion-debug-content" style="padding:14px;">
+                <div style="color:#64748b;font-size:0.85em;">Expand to compute.</div>
+            </div>
+        </details>`;
+
+    const localEPADebugHtml = `
+        <details style="margin-bottom:16px;border:1px solid #1e293b;border-radius:8px;overflow:hidden;"
+                 ontoggle="if(this.open) refreshLocalEPADebug()">
+            <summary style="cursor:pointer;color:#e2e8f0;font-weight:700;padding:10px 14px;background:#0f172a;font-size:1em;letter-spacing:0.02em;">
+                Local EPA Gain Debug
+                <span style="color:#475569;font-weight:400;font-size:0.82em;margin-left:8px;">K per match · error · ΔEPA</span>
+            </summary>
+            <div id="local-epa-debug-content" style="padding:14px;">
+                <div style="color:#64748b;font-size:0.85em;">Expand to compute.</div>
+            </div>
+        </details>`;
+
+    el.innerHTML = `<div style="padding:12px;">${quipTierHtml}${wlControlsHtml}${fusionDebugHtml}${localEPADebugHtml}${calibrationHtml}${notifTesterHtml}${streamSeekTestHtml}${fieldExplorerHtml}${timeMachineHtml}</div>`;
 }
 
 window.devTestNotif = function (type) {
@@ -9384,7 +9730,7 @@ async function renderAlliancesTab() {
     const tbaMap   = Object.fromEntries(tbaTeamsArr.map(t => [t.teamNumber, t]));
     const playedMatches = matchesArr.filter(m => (m.redScore ?? -1) >= 0);
     const { relResiduals, diffResiduals } = wlCollectResiduals(playedMatches, tbaMap, teamsMap);
-    const oprWeight = Math.min(1, playedMatches.length / 30);
+    const oprSigmaRel = wlStd(relResiduals);
     const avg = allTeamsArr.reduce((s, t) => s + (t.currentEPA ?? 0), 0) / (allTeamsArr.length || 1);
     const effectiveThresholds = getEffectiveThresholds(gameConfig, eventKey);
 
@@ -9420,7 +9766,7 @@ async function renderAlliancesTab() {
 
     // Compute scores for all alliances first (needed for color coding and win%)
     const allianceData = alliances.map(({ num, teams }) => {
-        const score    = wlAlliancePredictedScore(teams, tbaMap, teamsMap, avg, oprWeight);
+        const score    = wlAlliancePredictedScore(teams, tbaMap, teamsMap, avg, oprSigmaRel);
         const sigmaRel = wlAllianceSigmaRel(teams, teamsMap, score);
         const sigma    = sigmaRel * score;
         return { num, teams, score, sigma };
@@ -9469,7 +9815,7 @@ async function renderAlliancesTab() {
     el.innerHTML = `<div style="padding:12px;">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
             <h3 style="color:#e2e8f0;margin:0;">Alliance Estimates</h3>
-            <span style="color:#64748b;font-size:0.82em;">Source: ${source} · ${playedMatches.length} played matches · EPA/OPR blend ${Math.round(oprWeight*100)}% OPR</span>
+            <span style="color:#64748b;font-size:0.82em;">Source: ${source} · ${playedMatches.length} played matches · ${isFinite(oprSigmaRel) ? `OPR CV ${(oprSigmaRel*100).toFixed(1)}%` : 'EPA only (no event data)'}</span>
         </div>
         <div style="overflow-x:auto;">
         <table style="border-collapse:collapse;width:100%;min-width:400px;">
