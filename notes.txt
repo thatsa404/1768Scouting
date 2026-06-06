@@ -47,9 +47,25 @@ D - 4-team alliances for nexus (corrects for TBA)
 D - Matches tab only should only show quals
 D - No longer detects non-standard?
 
-Bracket view needs to be reorganized
-Match OPR including playoff matches?
 
+
+Bracket view needs to be reorganized
+D - Match OPR including playoff matches?
+D - RP in elims messing with dashboard rankings? Avg RP?
+D - mobile bar under main tabs is white. Change?
+D - Nexus time - realign stream for playback, make buffer ~2s instead of 20
+D - Tabs - move to bottom on mobile, easy UX
+D - List for saving event archive: data & setup/config
+D - Gap between subtabs for non-mobile views now...
+
+
+
+Real-time nexus updates
+
+
+
+
+Try: quickly show all autos for a given team? Maybe driver station rcorded somewhere
 
 
 

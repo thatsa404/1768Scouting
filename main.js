@@ -94,7 +94,8 @@ window.currentFocusedTeam = null;
 let _nexusInterval       = null;
 let _nexusDirectInterval = null; // direct API polling — runs independently of relay toggle
 let _queueNotifInterval  = null; // periodic fallback for time-based queueing notifications
-let _nexusLastKey        = null; // "label|status" dedup key
+let _nexusLastKey        = sessionStorage.getItem('nexusLastKey') || null; // "label|status" dedup key
+let _nexusStatusBarKey   = null; // db match key currently shown in the status bar
 let nexusMatchCache      = {}; // matchKey → { status, isQueuing }
 
 const NEXUS_DEFAULT_URL = 'https://nexus-relay.thatsa404.workers.dev';
@@ -178,6 +179,14 @@ async function applyNexusEventData(data) {
     updateScheduleCountdowns();
     updateHomeBanner();
     check1768QueueNotifications();
+    await _clearScoredNexusStatusBar();
+}
+
+// Hide the status bar if the match it's showing has already been scored in TBA.
+async function _clearScoredNexusStatusBar() {
+    if (!_nexusStatusBarKey) return;
+    const m = await db.matches.get(_nexusStatusBarKey);
+    if (m && (m.redScore ?? -1) >= 0) updateNexusStatusBar(null);
 }
 
 // Update status badges on unscored cells in the schedule table.
@@ -263,23 +272,25 @@ function handleNexusPayload(data) {
     const status = (match.status ?? '').trim();
     if (!label && !status) return;
 
-    updateNexusStatusBar({ label, status });
-
     // Notify only on status change
     const key = `${label}|${status}`;
     if (key === _nexusLastKey) return;
     _nexusLastKey = key;
+    sessionStorage.setItem('nexusLastKey', key);
 
     // Write relay data into nexusMatchCache so check1768QueueNotifications can read it
     const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    let dbKey = null;
     if (eventKey) {
         const qualM = label.match(/^qualification\s+(\d+)$/i);
         const playM = label.match(/^playoff\s+(\d+)$/i);
-        const dbKey = qualM ? `${eventKey}_qm${qualM[1]}`
-                    : playM ? `${eventKey}_sf${playM[1]}m1`
-                    : null;
+        dbKey = qualM ? `${eventKey}_qm${qualM[1]}`
+              : playM ? `${eventKey}_sf${playM[1]}m1`
+              : null;
         if (dbKey) nexusMatchCache[dbKey] = { ...(nexusMatchCache[dbKey] || {}), status };
     }
+
+    updateNexusStatusBar({ label, status }, dbKey);
 
     check1768QueueNotifications();
 
@@ -360,10 +371,10 @@ async function check1768QueueNotifications() {
     }
 }
 
-function updateNexusStatusBar(data) {
+window.updateNexusStatusBar = function updateNexusStatusBar(data, matchKey) {
     const bar = document.getElementById('nexus-status-bar');
     if (!bar) return;
-    if (!data) { bar.style.display = 'none'; return; }
+    if (!data) { bar.style.display = 'none'; _nexusStatusBarKey = null; return; }
 
     const { label, status } = data;
     const lc = status.toLowerCase();
@@ -377,6 +388,15 @@ function updateNexusStatusBar(data) {
     const labelEl = bar.querySelector('.nexus-label');
     if (dotEl)   dotEl.style.background = textColor;
     if (labelEl) { labelEl.style.color = textColor; labelEl.textContent = `${label} · ${status}`; }
+    const dismissEl = bar.querySelector('.nexus-dismiss');
+    if (dismissEl) dismissEl.style.color = textColor;
+
+    _nexusStatusBarKey = matchKey || null;
+
+    // Auto-clear after results are posted — no need to persist a terminal status
+    if (lc.includes('result') || lc.includes('posted')) {
+        setTimeout(() => updateNexusStatusBar(null), 20_000);
+    }
 }
 
 window.toggleNexus = function () {
@@ -443,6 +463,21 @@ function showEventSelector() {
     const overlay = document.getElementById('event-selector-overlay');
     if (!overlay) return;
 
+    const localReg = JSON.parse(localStorage.getItem('localArchiveRegistry') || '{}');
+
+    const archiveBadge = type => type === 'config'
+        ? `<span style="color:#f59e0b;font-size:0.72em;font-weight:700;margin-top:2px;">Config archive</span>`
+        : type === 'full'
+        ? `<span style="color:#60a5fa;font-size:0.72em;font-weight:700;margin-top:2px;">Full archive</span>`
+        : `<span style="color:#94a3b8;font-size:0.72em;margin-top:2px;">Archive</span>`;
+
+    const makeCard = (key, sublabel, archiveType) => `
+        <button class="event-preset-card" onclick="window.selectPresetEvent('${key}')">
+            <span class="preset-key">${key}</span>
+            ${sublabel ? `<span class="preset-sublabel">${sublabel}</span>` : ''}
+            ${archiveType ? archiveBadge(archiveType) : ''}
+        </button>`;
+
     // Build preset cards grouped by year, newest first
     const byYear = {};
     for (const [key, src] of Object.entries(SCOUTING_SOURCES)) {
@@ -452,23 +487,37 @@ function showEventSelector() {
     }
     const years = Object.keys(byYear).sort((a, b) => b - a);
 
+    // Registry-only events: saved/loaded archives not in SCOUTING_SOURCES
+    const registryOnlyKeys = Object.keys(localReg).filter(k => !SCOUTING_SOURCES[k]);
+
+    const makeSection = (label, cards, isOpen) =>
+        `<details class="event-year-section"${isOpen ? ' open' : ''}>
+            <summary class="event-selector-year-label"><span>${label}</span><span class="year-arrow">▾</span></summary>
+            <div class="year-cards">${cards}</div>
+        </details>`;
+
     const presetsEl = document.getElementById('event-selector-presets');
     if (presetsEl) {
-        presetsEl.innerHTML = years.map(year => {
+        const sourceSections = years.map((year, i) => {
             const cards = byYear[year].map(({ key, src }) => {
                 const gameConfig = getGameConfig(key);
                 const sublabel = [src.label, gameConfig ? `${gameConfig.name} ${year}` : null]
                     .filter(Boolean).join(' · ');
-                return `<button class="event-preset-card" onclick="window.selectPresetEvent('${key}')">
-                    <span class="preset-key">${key}</span>
-                    ${sublabel ? `<span class="preset-sublabel">${sublabel}</span>` : ''}
-                </button>`;
+                return makeCard(key, sublabel, localReg[key]?.archiveType);
             }).join('');
-            return `<div>
-                <div class="event-selector-year-label">${year}</div>
-                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:8px;">${cards}</div>
-            </div>`;
+            return makeSection(year, cards, i === 0);
         }).join('');
+
+        const archiveSection = registryOnlyKeys.length ? (() => {
+            const cards = registryOnlyKeys.map(key => {
+                const gameConfig = getGameConfig(key);
+                const sublabel = gameConfig ? `${gameConfig.name} ${gameConfig.year}` : null;
+                return makeCard(key, sublabel, localReg[key]?.archiveType);
+            }).join('');
+            return makeSection('My Archives', cards, true);
+        })() : '';
+
+        presetsEl.innerHTML = archiveSection + sourceSections;
     }
 
     // Show "Continue with [key]" if a key is already saved
@@ -506,20 +555,9 @@ window.selectPresetEvent = async function (key) {
     window.closeEventSelector();
 
     // Auto-load archive if one exists for this event
-    const url = `${import.meta.env.BASE_URL}scouting/${key}_archive.json`;
     const hint = document.getElementById('archiveHint');
     if (hint) hint.innerHTML = `<span style="color:#64748b;font-size:0.82em;">Checking for archive…</span>`;
-    try {
-        const resp = await fetch(url, { method: 'HEAD' });
-        const ct = resp.headers.get('content-type') || '';
-        if (resp.ok && ct.includes('json')) {
-            await window.loadEventArchive(key);
-        } else {
-            if (hint) hint.innerHTML = `<span style="color:#475569;font-size:0.8em;">No archive available</span>`;
-        }
-    } catch {
-        if (hint) hint.innerHTML = `<span style="color:#475569;font-size:0.8em;">No archive available</span>`;
-    }
+    await window.loadEventArchive(key);
 };
 
 window.selectCustomEvent = function () {
@@ -2601,8 +2639,30 @@ async function importArchiveBundle(data, eventKey) {
         if (data.preEventSnapshot) {
             localStorage.setItem(`wlPreEventSnapshot_${data.eventKey}`, JSON.stringify(data.preEventSnapshot));
         }
+        // Config fields (present in both config and full archives)
+        if (data.rpThresholds)     localStorage.setItem(`rpThresholds_${eventKey}`, JSON.stringify(data.rpThresholds));
+        if (data.webcasts)         localStorage.setItem(`webcasts_${eventKey}`, JSON.stringify(data.webcasts));
+        if (data.eventNotes)       localStorage.setItem(`eventNotes_${eventKey}`, JSON.stringify(data.eventNotes));
+        if (data.scoutingSheetUrl) localStorage.setItem(`scoutingSheetUrl_${eventKey}`, data.scoutingSheetUrl);
+        if (data.pitSheetUrl)      localStorage.setItem(`pitSheetUrl_${eventKey}`, data.pitSheetUrl);
+        if (data.pickListOrder)    localStorage.setItem('pickListOrder', JSON.stringify(data.pickListOrder));
+        if (data.draftConfig) {
+            if (data.draftConfig.mode)             localStorage.setItem('draftMode', data.draftConfig.mode);
+            if (data.draftConfig.numAlliances)     localStorage.setItem('draftNumAlliances', data.draftConfig.numAlliances);
+            if (data.draftConfig.picksPerAlliance) localStorage.setItem('draftPicksPerAlliance', data.draftConfig.picksPerAlliance);
+            if (data.draftConfig.epaWeights)       localStorage.setItem('draftEPAWeights', JSON.stringify(data.draftConfig.epaWeights));
+        }
+        if (data.nexusConfig) {
+            if (data.nexusConfig.relayUrl)          localStorage.setItem('nexusRelayUrl', data.nexusConfig.relayUrl);
+            if (data.nexusConfig.enabled != null)   localStorage.setItem('nexusEnabled', data.nexusConfig.enabled);
+            if (data.nexusConfig.eventKeyOverride)  localStorage.setItem('nexusEventKeyOverride', data.nexusConfig.eventKeyOverride);
+        }
+        if (data.localEpaEnabled != null) localStorage.setItem('localEpaEnabled', data.localEpaEnabled);
+
+        _recordLocalArchive(eventKey, data.archiveType);
         const scoutCount = data.scoutingRows?.length || 0;
-        return `Archive loaded: ${scoutCount} scouting rows + ${data.teams?.length || 0} teams + ${data.matches?.length || 0} matches`;
+        const type = data.archiveType === 'config' ? 'Config archive' : 'Archive';
+        return `${type} loaded: ${data.teams?.length || 0} teams + ${data.matches?.length || 0} matches + ${scoutCount} scouting rows`;
     } else {
         // Legacy: bare array of scouting rows
         localStorage.setItem(`scoutingData_${eventKey}`, JSON.stringify(data));
@@ -2637,6 +2697,25 @@ function updateOBEStatus(eventKey) {
     }
 }
 
+// Returns the first available archive URL for the event key, or null if none found.
+// Priority: full → config → legacy plain archive.
+async function findArchiveUrl(eventKey) {
+    const base = import.meta.env.BASE_URL;
+    const candidates = [
+        `${base}scouting/${eventKey}_full_archive.json`,
+        `${base}scouting/${eventKey}_config_archive.json`,
+        `${base}scouting/${eventKey}_archive.json`,
+    ];
+    for (const url of candidates) {
+        try {
+            const resp = await fetch(url, { method: 'HEAD' });
+            const ct = resp.headers.get('content-type') || '';
+            if (resp.ok && ct.includes('json')) return url;
+        } catch {}
+    }
+    return null;
+}
+
 // Checks for a public archive file for the given event key and updates #archiveHint.
 let _archiveCheckTimer = null;
 async function checkEventArchive(eventKey) {
@@ -2644,17 +2723,10 @@ async function checkEventArchive(eventKey) {
     if (!hint) return;
     if (!eventKey || eventKey.length < 6) { hint.innerHTML = ''; return; }
 
-    const url = `${import.meta.env.BASE_URL}scouting/${eventKey}_archive.json`;
-    try {
-        const resp = await fetch(url, { method: 'HEAD' });
-        const ct = resp.headers.get('content-type') || '';
-        // Vite's SPA fallback returns 200 with text/html for missing paths — reject those
-        if (resp.ok && ct.includes('json')) {
-            hint.innerHTML = `<button onclick="loadEventArchive('${eventKey}')" style="background:#1e3a5f;color:#60a5fa;border:1px solid #3b82f6;font-size:0.82em;padding:6px 12px;">↓ Load Archived Data</button>`;
-        } else {
-            hint.innerHTML = `<span style="color:#475569;font-size:0.8em;">No archive available</span>`;
-        }
-    } catch {
+    const url = await findArchiveUrl(eventKey);
+    if (url) {
+        hint.innerHTML = `<button onclick="loadEventArchive('${eventKey}')" style="background:#1e3a5f;color:#60a5fa;border:1px solid #3b82f6;font-size:0.82em;padding:6px 12px;">↓ Load Archived Data</button>`;
+    } else {
         hint.innerHTML = `<span style="color:#475569;font-size:0.8em;">No archive available</span>`;
     }
 }
@@ -2663,9 +2735,13 @@ window.loadEventArchive = async function (eventKey) {
     if (!eventKey) eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
     if (!eventKey) { alert('No event key — type one in the Event Key field first.'); return; }
 
-    const url = `${import.meta.env.BASE_URL}scouting/${eventKey}_archive.json`;
     const hint = document.getElementById('archiveHint');
     if (hint) hint.innerHTML = `<span style="color:#64748b;font-size:0.82em;">Loading…</span>`;
+    const url = await findArchiveUrl(eventKey);
+    if (!url) {
+        if (hint) hint.innerHTML = `<span style="color:#475569;font-size:0.8em;">No archive available</span>`;
+        return;
+    }
     try {
         const resp = await fetch(url);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -2853,10 +2929,79 @@ window.syncPitData = async function () {
     await _syncPitDataForEvent(eventKey);
 };
 
-window.saveScoutingArchive = async function () {
+function _recordLocalArchive(eventKey, archiveType) {
+    const reg = JSON.parse(localStorage.getItem('localArchiveRegistry') || '{}');
+    reg[eventKey] = { archiveType: archiveType || 'full' };
+    localStorage.setItem('localArchiveRegistry', JSON.stringify(reg));
+}
+
+function _downloadBundle(bundle) {
+    _recordLocalArchive(bundle.eventKey, bundle.archiveType);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' }));
+    a.download = `${bundle.eventKey}_${bundle.archiveType}_archive.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
+function showArchiveSummaryModal(bundle) {
+    const existing = document.getElementById('archiveSummaryModal');
+    if (existing) existing.remove();
+
+    const played = (bundle.matches || []).filter(m => (m.redScore ?? -1) >= 0).length;
+    const unplayed = (bundle.matches || []).length - played;
+    const isConfig = bundle.archiveType === 'config';
+
+    const row = (label, value) =>
+        `<tr><td style="color:#94a3b8;padding:4px 12px 4px 0;white-space:nowrap;">${label}</td>` +
+        `<td style="color:#f1f5f9;font-weight:600;">${value}</td></tr>`;
+    const check = v => v ? '<span style="color:#4ade80;">✓</span>' : '<span style="color:#475569;">—</span>';
+
+    const rows = [
+        row('Archive type', `<span style="color:${isConfig ? '#f59e0b' : '#60a5fa'}">${isConfig ? 'Config (pre-event)' : 'Full (post-event)'}</span>`),
+        row('Teams (EPA/history)', `${bundle.teams?.length || 0} teams, ${bundle.tbaTeams?.length || 0} TBA`),
+        row('Matches', isConfig ? '— (config only)' : `${bundle.matches?.length || 0} total (${played} played, ${unplayed} unplayed)`),
+        row('Scouting data', isConfig ? '— (config only)' : `${bundle.scoutingRows?.length || 0} match rows, ${bundle.pitRows?.length || 0} pit rows`),
+        row('Alliance picks', isConfig ? '— (config only)' : check(bundle.tbaAlliances?.length)),
+        row('RP thresholds', check(bundle.rpThresholds)),
+        row('Webcast URLs', bundle.webcasts?.length ? `${bundle.webcasts.length} streams` : check(false)),
+        row('Scouting sheet URL', check(bundle.scoutingSheetUrl)),
+        row('Pit sheet URL', check(bundle.pitSheetUrl)),
+        row('Pick list order', bundle.pickListOrder?.length ? `${bundle.pickListOrder.filter(e => e !== '---separator---').length} teams` : check(false)),
+        row('Draft config', check(bundle.draftConfig?.mode)),
+        row('Nexus relay URL', check(bundle.nexusConfig?.relayUrl)),
+        row('Nexus enabled', bundle.nexusConfig?.enabled != null ? bundle.nexusConfig.enabled === 'true' ? '<span style="color:#4ade80;">Yes</span>' : 'No' : check(false)),
+        row('Local EPA', bundle.localEpaEnabled != null ? bundle.localEpaEnabled === 'true' ? '<span style="color:#4ade80;">Enabled</span>' : 'Disabled' : check(false)),
+        row('W-L calibration beta', bundle.calibrationBeta != null ? bundle.calibrationBeta.toFixed(4) : check(false)),
+        row('Pre-event prediction snapshot', check(bundle.preEventSnapshot)),
+        row('Event notes', bundle.eventNotes?.length ? `${bundle.eventNotes.length} entries` : check(false)),
+    ];
+
+    const modal = document.createElement('div');
+    modal.id = 'archiveSummaryModal';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:500;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;padding:20px;';
+    modal.innerHTML = `
+        <div style="background:#1e293b;border:1px solid #334155;border-radius:12px;max-width:480px;width:100%;max-height:90vh;overflow-y:auto;padding:24px;">
+            <div style="font-size:1.1em;font-weight:700;color:#f1f5f9;margin-bottom:4px;">Archive Summary</div>
+            <div style="font-size:0.78em;color:#64748b;margin-bottom:16px;">${bundle.eventKey} · ${new Date(bundle.archived).toLocaleString()}</div>
+            <table style="width:100%;border-collapse:collapse;font-size:0.85em;margin-bottom:20px;">${rows.join('')}</table>
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+                <button onclick="document.getElementById('archiveSummaryModal').remove()"
+                    style="background:transparent;color:#64748b;border:1px solid #334155;border-radius:6px;padding:7px 18px;cursor:pointer;font-size:0.9em;">Cancel</button>
+                <button id="archiveDownloadBtn"
+                    style="background:#1e40af;color:#f1f5f9;border:1px solid #3b82f6;border-radius:6px;padding:7px 18px;cursor:pointer;font-size:0.9em;font-weight:600;">↓ Download</button>
+            </div>
+        </div>`;
+    document.body.appendChild(modal);
+    document.getElementById('archiveDownloadBtn').onclick = () => {
+        _downloadBundle(bundle);
+        modal.remove();
+    };
+}
+
+window.saveArchiveBundle = async function (mode = 'full') {
     const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
     if (!eventKey) { alert('Enter an event key first.'); return; }
-    const raw = localStorage.getItem(`scoutingData_${eventKey}`);
 
     const [teams, tbaTeams, matches] = await Promise.all([
         db.teams.where('eventKey').equals(eventKey).toArray(),
@@ -2864,28 +3009,66 @@ window.saveScoutingArchive = async function () {
         db.matches.where('eventKey').equals(eventKey).toArray(),
     ]);
 
-    const pitRaw = localStorage.getItem(`pitData_${eventKey}`);
-    const allianceRaw = localStorage.getItem(`tbaAlliances_${eventKey}`);
     const savedBeta = parseFloat(localStorage.getItem(`wlCalibrationBeta_${eventKey}`));
+
+    // Effective RP thresholds: merge game-config defaults with any saved overrides.
+    // Saved as {rpField: value} so importArchiveBundle can restore them correctly.
+    const gameConfig = getGameConfig(eventKey);
+    const effectiveThresholds = getEffectiveThresholds(gameConfig, eventKey);
+    const rpThresholdsForArchive = effectiveThresholds.length
+        ? Object.fromEntries(effectiveThresholds.filter(r => r.threshold != null).map(r => [r.rpField, r.threshold]))
+        : null;
+
+    // Filter pick list to teams at this event only (the global pickListOrder accumulates across events).
+    const eventTeamSet = new Set(teams.map(t => String(t.teamNumber)));
+    const rawPickOrder = JSON.parse(localStorage.getItem('pickListOrder') ?? 'null');
+    const filteredPickOrder = rawPickOrder
+        ? rawPickOrder.filter(entry => entry === '---separator---' || eventTeamSet.has(String(entry)))
+        : null;
+
     const bundle = {
         eventKey,
         archived: new Date().toISOString(),
-        scoutingRows: raw ? JSON.parse(raw) : [],
-        pitRows: pitRaw ? JSON.parse(pitRaw) : null,
+        archiveType: mode,
+        // ── Team data (both modes) ──────────────────────────────────────
         teams: teams.map(({ photoUrl: _, ...rest }) => rest),
         tbaTeams,
-        matches,
-        tbaAlliances: allianceRaw ? JSON.parse(allianceRaw) : null,
-        calibrationBeta: isNaN(savedBeta) ? null : savedBeta,
+        // ── Config / settings (both modes) ─────────────────────────────
+        rpThresholds:     rpThresholdsForArchive,
+        webcasts:         JSON.parse(localStorage.getItem(`webcasts_${eventKey}`) ?? 'null'),
+        eventNotes:       JSON.parse(localStorage.getItem(`eventNotes_${eventKey}`) ?? 'null'),
+        scoutingSheetUrl: localStorage.getItem(`scoutingSheetUrl_${eventKey}`) ?? null,
+        pitSheetUrl:      localStorage.getItem(`pitSheetUrl_${eventKey}`) ?? null,
+        pickListOrder:    filteredPickOrder,
+        draftConfig: {
+            mode:             localStorage.getItem('draftMode') ?? null,
+            numAlliances:     localStorage.getItem('draftNumAlliances') ?? null,
+            picksPerAlliance: localStorage.getItem('draftPicksPerAlliance') ?? null,
+            epaWeights:       JSON.parse(localStorage.getItem('draftEPAWeights') ?? 'null'),
+        },
+        nexusConfig: {
+            relayUrl:         localStorage.getItem('nexusRelayUrl') ?? null,
+            enabled:          localStorage.getItem('nexusEnabled') ?? null,
+            eventKeyOverride: localStorage.getItem('nexusEventKeyOverride') ?? null,
+        },
+        localEpaEnabled:  localStorage.getItem('localEpaEnabled') ?? null,
+        // Model calibration — useful pre-event to seed predictions
+        calibrationBeta:  isNaN(savedBeta) ? null : savedBeta,
         preEventSnapshot: JSON.parse(localStorage.getItem(`wlPreEventSnapshot_${eventKey}`) ?? 'null'),
     };
 
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' }));
-    a.download = `${eventKey}_archive.json`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    if (mode === 'full') {
+        bundle.scoutingRows  = JSON.parse(localStorage.getItem(`scoutingData_${eventKey}`) ?? '[]');
+        bundle.pitRows       = JSON.parse(localStorage.getItem(`pitData_${eventKey}`) ?? 'null');
+        bundle.matches       = matches;
+        bundle.tbaAlliances  = JSON.parse(localStorage.getItem(`tbaAlliances_${eventKey}`) ?? 'null');
+    }
+
+    showArchiveSummaryModal(bundle);
 };
+
+// Backwards-compatible alias
+window.saveScoutingArchive = () => saveArchiveBundle('full');
 
 // ── Adjustments bundle (ignored matches, ceilings, notes) ────────────────────
 
@@ -5791,7 +5974,12 @@ window.renderWatchList = async function renderWatchList() {
     ]);
 
     if (!allMatches.length) {
-        container.innerHTML = `<p style="color:#64748b;padding:20px 0;">No schedule loaded — sync TBA matches first.</p>`;
+        const effectiveThresholdsNoSched = getEffectiveThresholds(gameConfig, eventKey);
+        const controlsNoSched = effectiveThresholdsNoSched.some(r => r.threshold != null)
+            ? buildWLControlsHTML(eventKey, effectiveThresholdsNoSched, 0, {})
+            : '';
+        container.innerHTML = controlsNoSched +
+            `<p style="color:#64748b;padding:20px 0;">No schedule loaded — sync TBA matches first.</p>`;
         return;
     }
 
@@ -6693,6 +6881,9 @@ window.switchView = function (viewId, btn) {
 
     // 6. Update the Back button label on the Team Detail page
     updateDetailBackButton();
+
+    // 7. Re-anchor tab bars flush against nav in mobile layout
+    positionMobileTabBars();
 };
 
 let currentDataTab = 'statbotics';
@@ -6708,6 +6899,32 @@ window.toggleDataChart = function () {
         .forEach(id => { const el = document.getElementById(id); if (el) el.textContent = label; });
 };
 
+function positionMobileTabBars() {
+    if (!document.body.classList.contains('mobile-ui')) return;
+    const nav = document.querySelector('.mobile-bottom-nav');
+    if (!nav) return;
+    requestAnimationFrame(() => {
+        const navTop = nav.getBoundingClientRect().top;
+        const primaryBottom = window.innerHeight - navTop;
+        // Position every visible primary tab bar flush against the nav bar
+        document.querySelectorAll('.app-view > .detail-tabs').forEach(el => {
+            el.style.bottom = primaryBottom + 'px';
+        });
+        // Force reflow, then position sub-tabs flush against dataTabs specifically
+        const dataTabs = document.getElementById('dataTabs');
+        if (dataTabs) {
+            const tabTop = dataTabs.getBoundingClientRect().top;
+            const subBottom = window.innerHeight - tabTop;
+            ['tbaTabs', 'scoutingSubTabs'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.style.bottom = subBottom + 'px';
+            });
+        }
+    });
+}
+// Keep old name as alias so existing call sites don't break
+const positionMobileSubTabs = positionMobileTabBars;
+
 window.switchDataTab = function (tab) {
     currentDataTab = tab;
     ['statbotics', 'tba', 'scouting', 'algorithms'].forEach(t => {
@@ -6716,6 +6933,7 @@ window.switchDataTab = function (tab) {
     document.querySelectorAll('#dataTabs .detail-tab-btn').forEach((btn, i) => {
         btn.classList.toggle('active', ['statbotics', 'tba', 'scouting', 'algorithms'][i] === tab);
     });
+    positionMobileSubTabs();
     if (tab === 'scouting') {
         displayScoutingTeams();   // immediate render from cache or raw scouting
         computeScoutingFusion();  // async — re-renders when fusion completes
@@ -11134,6 +11352,9 @@ checkEventArchive(document.getElementById('eventKeyInput').value.trim().toLowerC
 if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register(import.meta.env.BASE_URL + 'sw.js').catch(() => { });
 }
+
+window.addEventListener('resize', positionMobileSubTabs);
+window.addEventListener('orientationchange', () => setTimeout(positionMobileSubTabs, 100));
 
 
 

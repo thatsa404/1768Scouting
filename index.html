@@ -258,7 +258,7 @@
             border-bottom: 2px solid #ddd;
             padding-bottom: 10px;
             flex-shrink: 0;
-            background: #1a1a1a;
+            background: #0f172a;
         }
 
         .nav-btn {
@@ -456,6 +456,19 @@
         .event-selector-year-label {
             font-size: 0.72em; font-weight: 800; letter-spacing: 0.07em;
             text-transform: uppercase; color: #475569; margin-bottom: 6px;
+        }
+        details.event-year-section { margin-bottom: 12px; }
+        details.event-year-section > summary.event-selector-year-label {
+            cursor: pointer; list-style: none; display: flex;
+            align-items: center; justify-content: space-between;
+            margin-bottom: 0; padding: 4px 0; user-select: none;
+        }
+        details.event-year-section > summary.event-selector-year-label::-webkit-details-marker { display: none; }
+        details.event-year-section > summary .year-arrow { transition: transform 0.15s; display: inline-block; }
+        details.event-year-section[open] > summary .year-arrow { transform: rotate(180deg); }
+        details.event-year-section > .year-cards {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 8px; margin-top: 6px;
         }
         #event-selector-overlay { z-index: 1100; }
 
@@ -783,7 +796,7 @@
             position: sticky;
             top: 0;
             z-index: 90;
-            background: #1a1a1a;
+            background: #0f172a;
         }
 
         .detail-tab-btn {
@@ -1288,6 +1301,82 @@
             top: 0;
         }
         body.mobile-ui .detail-tabs::-webkit-scrollbar { display: none; }
+
+        /* Heights used for stacked bottom bars */
+        body.mobile-ui {
+            --nav-bar-h: calc(62px + env(safe-area-inset-bottom, 0px));
+            --tab-bar-h: 40px;
+        }
+
+        /* Primary tabs: bottom edge flush with top of nav bar */
+        body.mobile-ui .app-view > .detail-tabs {
+            position: fixed;
+            bottom: var(--nav-bar-h);
+            top: auto !important;
+            left: 0;
+            right: 0;
+            padding: 0 !important;
+            margin: 0 !important;
+            border-top: 2px solid #334155;
+            border-bottom: none;
+            background: #0f172a;
+            z-index: 89;
+        }
+        body.light-mode.mobile-ui .app-view > .detail-tabs {
+            background: #f8fafc;
+            border-top-color: #cbd5e1;
+        }
+        /* Active indicator on top edge */
+        body.mobile-ui .app-view > .detail-tabs .detail-tab-btn {
+            border-bottom: none;
+            border-top: 3px solid transparent;
+            margin-bottom: 0;
+            margin-top: 0;
+        }
+        body.mobile-ui .app-view > .detail-tabs .detail-tab-btn.active {
+            border-top: 3px solid #60a5fa;
+        }
+
+        /* Sub-tabs: bottom edge flush with top of primary tab bar */
+        body.mobile-ui #tbaTabs,
+        body.mobile-ui #scoutingSubTabs {
+            position: fixed;
+            bottom: calc(var(--nav-bar-h) + var(--tab-bar-h));
+            top: auto !important;
+            left: 0;
+            right: 0;
+            padding: 0 !important;
+            margin: 0 !important;
+            border-top: 2px solid #334155;
+            border-bottom: none;
+            background: #0f172a;
+            z-index: 88;
+        }
+        body.light-mode.mobile-ui #tbaTabs,
+        body.light-mode.mobile-ui #scoutingSubTabs {
+            background: #f8fafc;
+            border-top-color: #cbd5e1;
+        }
+        body.mobile-ui #tbaTabs .detail-tab-btn,
+        body.mobile-ui #scoutingSubTabs .detail-tab-btn {
+            border-bottom: none;
+            border-top: 3px solid transparent;
+            margin-bottom: 0;
+            margin-top: 0;
+        }
+        body.mobile-ui #tbaTabs .detail-tab-btn.active,
+        body.mobile-ui #scoutingSubTabs .detail-tab-btn.active {
+            border-top: 3px solid #60a5fa;
+        }
+
+        /* Scrollable content padding: clear the fixed tab bar(s) above nav */
+        body.mobile-ui .app-view {
+            padding-bottom: calc(var(--tab-bar-h) + 10px) !important;
+        }
+        /* Data view: may show a second tab bar, reserve space for both */
+        body.mobile-ui #dataView {
+            padding-bottom: calc(var(--tab-bar-h) * 2 + 10px) !important;
+        }
         body.mobile-ui .tbl-scroll {
             overflow-x: auto;
             overflow-y: clip;
@@ -1465,12 +1554,14 @@
         }
 
 
-        /* tbaTabs stacks below dataTabs in the same scroll container */
+        /* tbaTabs stacks below dataTabs in the same scroll container (desktop/split only) */
         #tbaTabs {
             top: 62px;  /* height of dataTabs */
         }
-        body.split-ui #tbaTabs { top: 50px; }
-        body.mobile-ui #tbaTabs { top: 44px; }
+        body.split-ui #tbaTabs { top: 42px; }
+        body.split-ui #scoutingSubTabs { top: 42px; }
+        body.split-ui #dataTabs { margin-bottom: 0 !important; }
+        /* mobile-ui: tbaTabs is fixed at bottom — top is controlled by the mobile-ui block above */
 
         /* Ensure sticky tab bars have opaque background to cover scrolled content */
         .detail-tabs { padding-top: 4px; }
@@ -1495,7 +1586,8 @@
     <div id="nexus-status-bar" style="display:none; align-items:center; gap:6px; padding:2px 14px; border-bottom:1px solid #334155;">
         <span class="nexus-dot" style="width:6px;height:6px;border-radius:50%;flex-shrink:0;"></span>
         <span style="color:#64748b;font-weight:700;letter-spacing:0.05em;margin-right:6px;">NEXUS</span>
-        <span class="nexus-label" style="font-weight:600;"></span>
+        <span class="nexus-label" style="font-weight:600;flex:1;"></span>
+        <button class="nexus-dismiss" onclick="updateNexusStatusBar(null)" style="background:none;border:none;cursor:pointer;font-size:1.1em;line-height:1;padding:0 2px;opacity:0.7;" title="Dismiss">×</button>
     </div>
 
     <div class="site-header">
@@ -1833,8 +1925,12 @@
                     <!-- Save Archive -->
                     <div class="setup-adv-section">
                         <div class="setup-section-label setup-label-blue">Save Archive</div>
-                        <p class="setup-section-desc">Export a full snapshot of all synced and scouted data for this event.</p>
-                        <button onclick="saveScoutingArchive()" style="background:#1e293b;color:#60a5fa;border:1px solid #60a5fa;">↓ Save Event Archive</button>
+                        <p class="setup-section-desc"><strong style="color:#f59e0b;">Config</strong> — event settings, team list, and calibration. Share before an event so others can load and sync immediately.<br>
+                        <strong style="color:#60a5fa;">Full</strong> — everything above plus all matches, scouting, and pit data. Use post-event for a permanent offline record.</p>
+                        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                            <button onclick="saveArchiveBundle('config')" style="background:#1e293b;color:#f59e0b;border:1px solid #f59e0b;">↓ Config Archive</button>
+                            <button onclick="saveArchiveBundle('full')" style="background:#1e293b;color:#60a5fa;border:1px solid #60a5fa;">↓ Full Archive</button>
+                        </div>
                     </div>
 
                     <!-- Clear Data -->
@@ -2041,9 +2137,6 @@
         </div>
 
         <div id="data-tab-scouting" style="display:none;">
-            <div style="margin-bottom:8px;">
-                <span id="scouting-fusion-status" style="color:#64748b;font-size:0.78em;"></span>
-            </div>
             <div class="detail-tabs" id="scoutingSubTabs"
                 style="margin-top:0;margin-bottom:12px;border-bottom:1px solid #1e293b;padding-bottom:4px;">
                 <button class="detail-tab-btn active" onclick="switchScoutingSubTab('teams')">Teams</button>
@@ -2075,6 +2168,9 @@
             </div>
 
             <div id="scouting-subtab-curation" style="display:none;">
+                <div style="margin-bottom:8px;margin-top:8px;">
+                    <span id="scouting-fusion-status" style="color:#64748b;font-size:0.78em;"></span>
+                </div>
                 <div id="scouting-curation-content">
                     <p style="color:#64748b;font-style:italic;margin-top:20px;">Loading curation data…</p>
                 </div>
