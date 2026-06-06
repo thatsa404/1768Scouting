@@ -1955,8 +1955,15 @@ async function processTeamPerformance(teamNumber, eventKey, force = false, teamE
         endgameEPA,
         epa: evEPA ?? summary.epa ?? null,
         rawStatboticsData: fullMatchData,
-        analysis: cachedTeam?.analysis || null,
+        analysis:    cachedTeam?.analysis    ?? null,
         lastUpdated: Date.now(),
+        // Preserve local EPA fields — put() is a full replace, these would otherwise be wiped,
+        // causing computeLocalEPA to re-seed from currentEPA instead of the original baseline.
+        preEventEPA:        cachedTeam?.preEventEPA        ?? null,
+        preEventAutoEPA:    cachedTeam?.preEventAutoEPA    ?? null,
+        preEventTeleopEPA:  cachedTeam?.preEventTeleopEPA  ?? null,
+        preEventEndgameEPA: cachedTeam?.preEventEndgameEPA ?? null,
+        localEPATimeline:   cachedTeam?.localEPATimeline   ?? [],
     });
 
     return null;
