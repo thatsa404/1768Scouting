@@ -122,6 +122,8 @@ function updateNexusUI() {
     const enabled = isNexusEnabled();
     const hasUrl  = !!getNexusUrl();
     if (urlIn && !urlIn.value) urlIn.value = getNexusUrl();
+    const keyIn = document.getElementById('nexusEventKeyOverride');
+    if (keyIn && !keyIn.value) keyIn.value = localStorage.getItem('nexusEventKeyOverride') || '';
     btn.style.opacity = (enabled && hasUrl) ? '1' : '0.45';
     if (label) label.textContent = (enabled && hasUrl) ? 'Connected' : hasUrl ? 'Off' : 'No URL';
 }
@@ -2325,6 +2327,17 @@ function _updateSyncDataStatus() {
 
 async function _runTBASyncs() {
     _tbaGotFreshData = false;
+    const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
+    const hasSchedule = eventKey
+        ? (await db.matches.where('eventKey').equals(eventKey).count()) > 0
+        : false;
+
+    if (!hasSchedule) {
+        // No schedule yet — fetch it first; skip OPR and EPA until it exists
+        await window.syncTBAMatches();
+        return;
+    }
+
     await window.syncTBAOPR();
     await window.syncTBAMatches();
     if (_tbaGotFreshData) {

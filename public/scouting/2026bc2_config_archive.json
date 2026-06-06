@@ -1,6 +1,6 @@
 {
   "eventKey": "2026bc2",
-  "archived": "2026-06-05T23:02:51.780Z",
+  "archived": "2026-06-06T12:11:23.363Z",
   "archiveType": "config",
   "teams": [
     {
@@ -87797,15 +87797,22 @@
     {
       "channel": "RanBShw4HQ8",
       "date": "2026-06-05",
-      "type": "youtube"
+      "type": "youtube",
+      "startTimestamp": 1780693406
     },
     {
       "channel": "Se4xWZgBrh8",
       "date": "2026-06-06",
-      "type": "youtube"
+      "type": "youtube",
+      "startTimestamp": 1780745166
     },
     {
       "channel": "Se4xWZgBrh8",
+      "date": "2026-06-07",
+      "type": "youtube"
+    },
+    {
+      "channel": "eCEnaYrsYYM",
       "date": "2026-06-07",
       "type": "youtube"
     }
@@ -87873,7 +87880,7 @@
   "nexusConfig": {
     "relayUrl": "https://nexus-relay.thatsa404.workers.dev",
     "enabled": "true",
-    "eventKeyOverride": "mawor2"
+    "eventKeyOverride": "2026mawor2"
   },
   "localEpaEnabled": "true",
   "calibrationBeta": 0.9264,
