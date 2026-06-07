@@ -2285,6 +2285,7 @@ let _statboticsJitterTimer  = null;  // one-shot setTimeout
 let _statboticsJitterFireAt = null;  // epoch ms when it will fire
 let _statboticsLastMs       = null;  // epoch ms of last completed syncStatboticsLive
 let _localEpaLastMs         = null;  // epoch ms of last completed computeLocalEPA
+let _snapshotStale          = false; // true when EPA/OPR changed since last prediction recompute
 
 function _scheduleJitteredStatbotics() {
     if (_statboticsJitterTimer) return; // already pending
@@ -2395,8 +2396,19 @@ async function _capturePreEventEPA(teams) {
 
 async function computeLocalEPA() {
     const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
-    const [teams, matches] = await Promise.all([db.teams.toArray(), db.matches.toArray()]);
+    const [teams, matches, tbaTeams] = await Promise.all([
+        db.teams.toArray(), db.matches.toArray(), db.tbaTeams.toArray(),
+    ]);
     if (!teams.length) return;
+
+    // Build ignore maps to mirror OPR ignore behaviour in the local EPA replay.
+    const globalIgnoredKeys = new Set(matches.filter(m => m.globallyIgnored).map(m => m.key));
+    // teamNumber (int) → Set of match keys ignored for that team specifically
+    const teamIgnoredKeys = {};
+    for (const t of tbaTeams) {
+        const keys = getTeamIgnoredKeys(t);
+        if (keys.length) teamIgnoredKeys[t.teamNumber] = new Set(keys);
+    }
 
     // Capture pre-event baseline for any teams added after local EPA was first enabled
     // (e.g. via syncStatboticsLive bulkPut). Without this, their seed falls back to
@@ -2470,7 +2482,7 @@ async function computeLocalEPA() {
     const getE = tn => epaState[tn] || (epaState[tn] = { current: 0, auto: 0, endgame: 0, n: 0 });
 
     const played = matches
-        .filter(m => (m.redScore ?? -1) >= 0 && (m.blueScore ?? -1) >= 0)
+        .filter(m => (m.redScore ?? -1) >= 0 && (m.blueScore ?? -1) >= 0 && !globalIgnoredKeys.has(m.key))
         .sort((a, b) => (a.actualTime || a.predictedTime || 0) - (b.actualTime || b.predictedTime || 0));
 
     // Per-team timeline: String(teamNumber) -> [{label, epa}]
@@ -2487,6 +2499,8 @@ async function computeLocalEPA() {
             const members = alliance.map(t => String(t).replace(/^frc/i, ''));
             if (!members.length) continue;
 
+            // Predictions use all alliance members (including any ignored ones) so
+            // the baseline score expectation is accurate even when a team is skipped.
             const predTotal   = members.reduce((s, t) => s + getE(t).current, 0);
             const predAuto    = members.reduce((s, t) => s + getE(t).auto,    0);
             const predEndgame = members.reduce((s, t) => s + getE(t).endgame, 0);
@@ -2495,6 +2509,9 @@ async function computeLocalEPA() {
             const N = members.length || 1;
 
             for (const t of members) {
+                // Skip EPA update if this match is individually ignored for this team.
+                // The team still participates in the alliance prediction above.
+                if (teamIgnoredKeys[parseInt(t)]?.has(m.key)) continue;
                 const e = getE(t);
                 e.n++;
                 const prev = Math.min(0.5, Math.max(0.3, 0.5 - (0.2 / 6) * (e.n - 6)));
@@ -2539,6 +2556,8 @@ async function computeLocalEPA() {
     if (activeTeamData && lastDetailDataSubTab === 'epa') {
         renderChart(activeTeamData);
     }
+
+    _setSnapshotStale(true);
 }
 
 function updateLocalEpaUI() {
@@ -4089,6 +4108,7 @@ window.syncTBAOPR = async function () {
         setSyncTimestamp('tbaOPR');
         statusDiv.innerText = `✅ TBA OPR synced for ${records.length} teams.`;
         await displayTBATeams();
+        _setSnapshotStale(true);
     } catch (err) {
         console.error(err);
         statusDiv.innerText = `❌ TBA OPR Sync Failed: ${err.message}`;
@@ -4919,12 +4939,17 @@ window.setGloballyIgnored = async function (matchKey, ignored) {
         }
     }
 
+    if (isLocalEpaEnabled()) await computeLocalEPA(); // affects all teams in the match
     await displayTBATeams();
     if (currentTBATab === 'matches') await renderMatchInfluenceTab();
     if (activeTBAData) {
         activeTBAData = await db.tbaTeams.get(activeTBAData.teamNumber);
         await renderTBADetail(activeTBAData.teamNumber, activeTBAData);
         if (activeTeamData) await renderOverview(activeTeamData, activeTBAData);
+    }
+    // Refresh the performance chart if the matches tab is open
+    if (lastDetailTab === 'matches' && activeTeamData) {
+        await renderMatchesTab(activeTeamData.teamNumber, 'matches-tab-perf-chart');
     }
 };
 
@@ -5977,13 +6002,29 @@ window.resetPreEventSnapshot = function(eventKey) {
     const { allMatches, teamsMap, tbaMap, allTeamNums, gameConfig, effectiveThresholds } = wlDetailCache;
     localStorage.removeItem(`wlPreEventSnapshot_${eventKey}`);
     wlPreEventCache = computePreEventSnapshot(eventKey, allMatches, teamsMap, tbaMap, allTeamNums, gameConfig, effectiveThresholds);
+    _setSnapshotStale(false);
     wlMatchesRenderedFor = null;
     renderWatchList();
 };
 
+function _setSnapshotStale(stale) {
+    _snapshotStale = stale;
+    const btn = document.getElementById('wl-recompute-btn');
+    if (!btn) return;
+    if (stale) {
+        btn.style.background = 'rgba(120,53,15,0.35)';
+        btn.style.color = '#fbbf24';
+        btn.style.borderColor = '#92400e';
+    } else {
+        btn.style.background = 'rgba(20,83,45,0.35)';
+        btn.style.color = '#4ade80';
+        btn.style.borderColor = '#166534';
+    }
+}
+
 // ── WATCH LIST CONTROLS (also rendered in Dev tab) ───────────────────────────
 
-function buildWLControlsHTML(eventKey, effectiveThresholds, totalMatchCount, tbaMap) {
+function buildWLControlsHTML(eventKey, effectiveThresholds, totalMatchCount) {
     const cutoffN = watchListCutoff;
 
     const thresholdCtrls = effectiveThresholds.filter(r => r.threshold != null).map(rpt => `
@@ -6009,24 +6050,10 @@ function buildWLControlsHTML(eventKey, effectiveThresholds, totalMatchCount, tba
             ${cutoffN != null ? `<button onclick="setWatchListCutoff(null)" style="background:transparent;color:#64748b;border:1px solid #334155;border-radius:4px;padding:3px 8px;font-size:0.82em;cursor:pointer;">Live</button>` : ''}
         </div>`;
 
-    const snapDate = wlPreEventCache
-        ? new Date(wlPreEventCache.computed).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-        : '—';
-    const hasOPR = Object.values(tbaMap).some(t => t.opr != null);
-    const baselineTip = 'Pre-event baseline: frozen snapshot using EPA only (no OPR, no residuals). Differences from live sim are expected if data was re-synced or OPR has since become available. Click Reset to recompute.';
-    const oprNote = hasOPR ? ' <span style="color:#475569;font-size:0.82em;" title="OPR is now available — baseline was computed without it">+OPR available</span>' : '';
-    const baselineCtrl = `
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;" title="${baselineTip}">
-            <span style="color:#94a3b8;font-size:0.85em;white-space:nowrap;">Baseline snapshot: ${snapDate}${oprNote}</span>
-            <button onclick="resetPreEventSnapshot('${eventKey}')"
-                style="background:transparent;color:#64748b;border:1px solid #334155;border-radius:4px;padding:3px 8px;font-size:0.82em;cursor:pointer;">Recompute</button>
-        </div>`;
-
     return `<div style="display:flex;flex-direction:column;gap:10px;padding:10px 0;">
         ${thresholdCtrls}
         ${resetBtn}
         ${cutoffCtrl}
-        ${baselineCtrl}
     </div>`;
 }
 
@@ -6079,7 +6106,7 @@ window.renderWatchList = async function renderWatchList() {
     if (!allMatches.length) {
         const effectiveThresholdsNoSched = getEffectiveThresholds(gameConfig, eventKey);
         const controlsNoSched = effectiveThresholdsNoSched.some(r => r.threshold != null)
-            ? buildWLControlsHTML(eventKey, effectiveThresholdsNoSched, 0, {})
+            ? buildWLControlsHTML(eventKey, effectiveThresholdsNoSched, 0)
             : '';
         container.innerHTML = controlsNoSched +
             `<p style="color:#64748b;padding:20px 0;">No schedule loaded — sync TBA matches first.</p>`;
@@ -6150,7 +6177,7 @@ window.renderWatchList = async function renderWatchList() {
 
     // ── Controls (rendered into Dev tab, not Watch List banner) ──────────────
     const devCtrlEl = document.getElementById('dev-wl-controls-content');
-    if (devCtrlEl) devCtrlEl.innerHTML = buildWLControlsHTML(eventKey, effectiveThresholds, totalMatchCount, tbaMap);
+    if (devCtrlEl) devCtrlEl.innerHTML = buildWLControlsHTML(eventKey, effectiveThresholds, totalMatchCount);
 
     const debugBanner = cutoffN != null
         ? `<div style="background:rgba(251,191,36,0.08);border:1px solid #b45309;border-radius:6px;padding:8px 14px;margin-bottom:12px;color:#fbbf24;font-size:0.85em;">
@@ -6284,7 +6311,26 @@ window.renderWatchList = async function renderWatchList() {
 
     // ── Initial render ────────────────────────────────────────────────────────
 
+    const snapDate = wlPreEventCache
+        ? new Date(wlPreEventCache.computed).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+        : '—';
+    const hasOPR = Object.values(tbaMap).some(t => t.opr != null);
+    const oprNote = hasOPR ? ' · <span style="color:#475569;font-size:0.78em;" title="OPR is now available — baseline was computed without it">+OPR</span>' : '';
+    const recomputeStyle = _snapshotStale
+        ? 'background:rgba(120,53,15,0.35);color:#fbbf24;border:1px solid #92400e;'
+        : wlPreEventCache
+            ? 'background:rgba(20,83,45,0.35);color:#4ade80;border:1px solid #166534;'
+            : 'background:transparent;color:#64748b;border:1px solid #334155;';
+    const recomputeRow = `
+        <div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-bottom:10px;">
+            <span style="color:#475569;font-size:0.78em;">Snapshot: ${snapDate}${oprNote}</span>
+            <button id="wl-recompute-btn" onclick="resetPreEventSnapshot('${eventKey}')"
+                style="${recomputeStyle}border-radius:4px;padding:3px 10px;font-size:0.82em;cursor:pointer;"
+                title="Recompute pre-event baseline using current EPA/OPR values">Recompute Predictions</button>
+        </div>`;
+
     container.innerHTML = `
+        ${recomputeRow}
         ${debugBanner}
         <div id="wl-main-banner" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 14px;background:#0f172a;border:1px solid #1e293b;border-radius:8px;margin-bottom:14px;">
             <span style="color:#f8fafc;font-weight:600;">Watching: ${focusedTN}</span>
@@ -8973,11 +9019,20 @@ window.refreshLocalEPADebug = async function () {
     const eventKey = document.getElementById('eventKeyInput')?.value.trim().toLowerCase();
     if (!eventKey) { el.innerHTML = `<div style="color:#64748b;font-size:0.85em;">No event key set.</div>`; return; }
 
-    const [teams, matches] = await Promise.all([
+    const [teams, matches, tbaTeamsDebug] = await Promise.all([
         db.teams.where('eventKey').equals(eventKey).toArray(),
         db.matches.where('eventKey').equals(eventKey).toArray(),
+        db.tbaTeams.toArray(),
     ]);
     if (!teams.length) { el.innerHTML = `<div style="color:#64748b;font-size:0.85em;">No teams for ${eventKey}.</div>`; return; }
+
+    // Mirror ignore maps from computeLocalEPA
+    const dbGlobalIgnoredKeys = new Set(matches.filter(m => m.globallyIgnored).map(m => m.key));
+    const dbTeamIgnoredKeys = {};
+    for (const t of tbaTeamsDebug) {
+        const keys = getTeamIgnoredKeys(t);
+        if (keys.length) dbTeamIgnoredKeys[t.teamNumber] = new Set(keys);
+    }
 
     // Partition: local vs statbotics (same logic as computeLocalEPA)
     const sbTeams = [], localTeams = [];
@@ -8993,7 +9048,7 @@ window.refreshLocalEPADebug = async function () {
     }
 
     const played = matches
-        .filter(m => (m.redScore ?? -1) >= 0 && (m.blueScore ?? -1) >= 0)
+        .filter(m => (m.redScore ?? -1) >= 0 && (m.blueScore ?? -1) >= 0 && !dbGlobalIgnoredKeys.has(m.key))
         .sort((a, b) => (a.actualTime || a.predictedTime || 0) - (b.actualTime || b.predictedTime || 0));
 
     // Replay computation, capturing debug info per team per match
@@ -9026,6 +9081,7 @@ window.refreshLocalEPADebug = async function () {
             const predTotal = members.reduce((s, t) => s + getE(t).current, 0);
             const N = members.length;
             for (const t of members) {
+                if (dbTeamIgnoredKeys[parseInt(t)]?.has(m.key)) continue;
                 const e = getE(t);
                 e.n++;
                 const prev = Math.min(0.5, Math.max(0.3, 0.5 - (0.2 / 6) * (e.n - 6)));
@@ -9353,8 +9409,7 @@ async function renderDevTab() {
                     ? buildWLControlsHTML(
                         (document.getElementById('eventKeyInput')?.value ?? '').trim().toLowerCase(),
                         wlDetailCache.effectiveThresholds,
-                        wlDetailCache.allMatches.length,
-                        wlDetailCache.tbaMap)
+                        wlDetailCache.allMatches.length)
                     : '<div style="color:#64748b;font-size:0.85em;">Open the Watch List tab first to load settings.</div>'}
             </div>
         </details>`;
@@ -10687,6 +10742,11 @@ async function renderWLMatchesTab(teamNumber) {
     wlMatchesRenderedFor = teamNumber;
 }
 
+window.setMatchChartYMode = function(mode) {
+    localStorage.setItem('matchChartYMode', mode);
+    if (activeTeamNumber) renderMatchesTab(activeTeamNumber, 'matches-tab-perf-chart');
+};
+
 async function renderMatchesTab(teamNumber, containerId = 'matches-tab-perf-chart') {
     const container = document.getElementById(containerId);
     if (!container) return;
@@ -10746,10 +10806,15 @@ async function renderMatchesTab(teamNumber, containerId = 'matches-tab-perf-char
     const oprData    = [];
     const scoutData  = [];
     const statEvData = [];
-    const ignoredColIndices = new Set();
+    const ignoredColIndices       = new Set(); // per-team ignored (red shade)
+    const globalIgnoredColIndices = new Set(); // globally ignored (amber shade)
 
     for (const m of allQualTeamMatches) {
-        const isPlayed = playedKeys.has(m.key);
+        const isPlayed       = playedKeys.has(m.key);
+        const hasScore       = (m.redScore ?? -1) >= 0;
+        const isGlobIgnored  = globalIgnored.has(m.key);
+
+        if (isGlobIgnored && hasScore) globalIgnoredColIndices.add(labels.length);
 
         if (isPlayed) {
             const isRed      = m.red?.includes(teamStr);
@@ -10799,6 +10864,52 @@ async function renderMatchesTab(teamNumber, containerId = 'matches-tab-perf-char
 
     const evPosH = makeHatch('#fbbf24'); const evNegH = makeHatch('#a78bfa');
 
+    // Y-axis mode: 'global' (same limits across all teams) or 'team' (auto-fit per team)
+    const yMode = localStorage.getItem('matchChartYMode') || 'global';
+    let yMin, yMax;
+    if (yMode === 'global') {
+        // Compute max positive and negative residuals across all teams using already-loaded data
+        let maxPos = 0, maxNeg = 0;
+        for (const m of allMatches) {
+            if ((!m.compLevel || m.compLevel === 'qm') && (m.redScore ?? -1) >= 0 && !globalIgnored.has(m.key)) {
+                for (const side of [m.red, m.blue]) {
+                    if (!side) continue;
+                    const score = side === m.red ? m.redScore : m.blueScore;
+                    for (const tn of side) {
+                        const opr = oprMap[tn] ?? 0;
+                        const partnerOPR = side.filter(t => t !== tn).reduce((s, t) => s + (oprMap[t] ?? 0), 0);
+                        const r1 = (score - partnerOPR) - opr;
+                        maxPos = Math.max(maxPos, r1); maxNeg = Math.max(maxNeg, -r1);
+                        const evEPA = evEPAMap[tn];
+                        if (evEPA != null) {
+                            const partnerEPA = side.filter(t => t !== tn).reduce((s, t) => s + (evEPAMap[t] ?? 0), 0);
+                            const r2 = (score - partnerEPA) - evEPA;
+                            maxPos = Math.max(maxPos, r2); maxNeg = Math.max(maxNeg, -r2);
+                        }
+                    }
+                }
+            }
+        }
+        const maxAbs = Math.max(maxPos, maxNeg);
+        if (maxAbs > 0) {
+            // Shared step ≈ 20% of largest deviation, snapped to a nice number (1/2/2.5/5/10 per decade)
+            const rawStep = maxAbs * 0.2;
+            const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+            const norm = rawStep / mag;
+            const niceFactor = norm < 1.5 ? 1 : norm < 2.25 ? 2 : norm < 3.75 ? 2.5 : norm < 7.5 ? 5 : 10;
+            const step = niceFactor * mag;
+            // Snap each bound independently — step is shared so tick spacing stays consistent
+            yMax =  Math.ceil(maxPos / step) * step;
+            yMin = -Math.ceil(maxNeg / step) * step;
+        } else {
+            yMax = 50; yMin = -50;
+        }
+    }
+
+    const btnStyle = (active) => active
+        ? 'background:#1e3a5f;color:#93c5fd;border:1px solid #2563eb;border-radius:4px;padding:2px 10px;font-size:0.78em;cursor:pointer;'
+        : 'background:transparent;color:#475569;border:1px solid #334155;border-radius:4px;padding:2px 10px;font-size:0.78em;cursor:pointer;';
+
     const statEvLine = teamEvEPA != null ? ` · Stat event EPA = ${teamEvEPA.toFixed(1)}` : '';
     container.innerHTML = `
         <div style="margin-top:16px;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:16px;">
@@ -10808,9 +10919,15 @@ async function renderMatchesTab(teamNumber, containerId = 'matches-tab-perf-char
                     OPR avg = ${teamOPR.toFixed(1)}${avgFusedEPA != null ? ` · scout avg = ${avgFusedEPA.toFixed(1)}` : ''}${statEvLine}
                 </span>
             </div>
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+                <span style="color:#64748b;font-size:0.78em;">Y-axis:</span>
+                <button onclick="window.setMatchChartYMode('global')" style="${btnStyle(yMode === 'global')}">All teams</button>
+                <button onclick="window.setMatchChartYMode('team')" style="${btnStyle(yMode === 'team')}">This team</button>
+            </div>
             <p style="margin:0 0 12px;font-size:0.78em;color:#475569;">Bars above zero = outperformed average; below = underperformed. All series share the same zero baseline.</p>
             <div style="overflow-x:auto;">
                 <div style="min-width:${Math.max(360, allQualTeamMatches.length * 54)}px;">
+                    <div style="display:flex;margin-bottom:2px;padding:0 2px;" id="matchesChartIgnoreBtns"></div>
                     <div style="position:relative;height:320px;"><canvas id="matchesChart"></canvas></div>
                     <div style="display:flex;margin-top:6px;padding:0 2px;" id="matchesChartLinks"></div>
                 </div>
@@ -10818,7 +10935,31 @@ async function renderMatchesTab(teamNumber, containerId = 'matches-tab-perf-char
         </div>
     `;
 
-    // Populate per-match links row — only played matches get a clickable link
+    // Populate per-match ignore-toggle row (above chart) and detail-link row (below chart)
+    const ignoreBtnsRow = document.getElementById('matchesChartIgnoreBtns');
+    if (ignoreBtnsRow) {
+        ignoreBtnsRow.innerHTML = allQualTeamMatches.map(m => {
+            const hasScore      = (m.redScore ?? -1) >= 0;
+            const isGlobIgnored = globalIgnored.has(m.key);
+            const isTeamIgnored = teamIgnoredKeys.has(m.key);
+            if (!hasScore) return `<div style="flex:1;"></div>`;
+            if (isGlobIgnored) {
+                return `<div style="flex:1;display:flex;justify-content:center;align-items:center;">
+                    <span title="Globally ignored" style="font-size:0.6em;font-weight:700;color:#d97706;letter-spacing:0.03em;line-height:1;padding:1px 3px;border:1px solid #92400e;border-radius:3px;">GLOBAL</span>
+                </div>`;
+            }
+            const active = isTeamIgnored;
+            return `<div style="flex:1;display:flex;justify-content:center;align-items:center;">
+                <button onclick="setIgnoredMatch(${teamNumber},'${m.key}')"
+                    title="${active ? 'Restore Q' + m.matchNumber + ' for this team' : 'Ignore Q' + m.matchNumber + ' for this team'}"
+                    style="background:none;border:1px solid ${active ? '#92400e' : 'transparent'};border-radius:3px;color:${active ? '#d97706' : '#334155'};font-size:0.72em;cursor:pointer;padding:1px 5px;line-height:1.4;transition:all 0.15s;"
+                    onmouseover="this.style.borderColor='${active ? '#d97706' : '#475569'}';this.style.color='${active ? '#fbbf24' : '#94a3b8'}'"
+                    onmouseout="this.style.borderColor='${active ? '#92400e' : 'transparent'}';this.style.color='${active ? '#d97706' : '#334155'}'">
+                    ${active ? '↩' : '✕'}
+                </button>
+            </div>`;
+        }).join('');
+    }
     const linksRow = document.getElementById('matchesChartLinks');
     if (linksRow) {
         linksRow.innerHTML = allQualTeamMatches.map(m => {
@@ -10833,36 +10974,43 @@ async function renderMatchesTab(teamNumber, containerId = 'matches-tab-perf-char
 
     if (matchesChartInstance) { matchesChartInstance.destroy(); matchesChartInstance = null; }
 
-    // Align the links row under the chart columns by reading chartArea after render.
+    // Align the button/link rows to chart columns by reading chartArea after render.
     const alignLinksPlugin = {
         id: 'matchesAlignLinks',
         afterRender(chart) {
-            const row = document.getElementById('matchesChartLinks');
-            if (!row || !labels.length) return;
             const { left, right } = chart.chartArea;
             const colWidth = (right - left) / labels.length;
-            row.style.paddingLeft  = `${left}px`;
-            row.style.paddingRight = `${chart.canvas.offsetWidth - right}px`;
-            row.querySelectorAll('div').forEach(div => {
-                div.style.width    = `${colWidth}px`;
-                div.style.minWidth = `${colWidth}px`;
-                div.style.flex     = 'none';
-            });
+            for (const rowId of ['matchesChartIgnoreBtns', 'matchesChartLinks']) {
+                const row = document.getElementById(rowId);
+                if (!row || !labels.length) continue;
+                row.style.paddingLeft  = `${left}px`;
+                row.style.paddingRight = `${chart.canvas.offsetWidth - right}px`;
+                row.querySelectorAll('div').forEach(div => {
+                    div.style.width    = `${colWidth}px`;
+                    div.style.minWidth = `${colWidth}px`;
+                    div.style.flex     = 'none';
+                });
+            }
         },
     };
 
-    // Shade ignored match columns with a red background using beforeDraw plugin.
+    // Shade ignored match columns: amber for global ignore, red for per-team ignore.
     const ignoredColBgPlugin = {
         id: 'matchesIgnoredBg',
         beforeDraw(chart) {
             const { ctx: c, chartArea, scales } = chart;
-            if (!chartArea || !ignoredColIndices.size) return;
+            if (!chartArea) return;
             const count = labels.length;
             const step  = count > 0 ? scales.x.width / count : 0;
             c.save();
-            c.fillStyle = 'rgba(239,68,68,0.12)';
+            for (const i of globalIgnoredColIndices) {
+                const cx = scales.x.getPixelForValue(i);
+                c.fillStyle = 'rgba(217,119,6,0.18)';
+                c.fillRect(cx - step / 2, chartArea.top, step, chartArea.bottom - chartArea.top);
+            }
             for (const i of ignoredColIndices) {
                 const cx = scales.x.getPixelForValue(i);
+                c.fillStyle = 'rgba(239,68,68,0.12)';
                 c.fillRect(cx - step / 2, chartArea.top, step, chartArea.bottom - chartArea.top);
             }
             c.restore();
@@ -10918,6 +11066,7 @@ async function renderMatchesTab(teamNumber, containerId = 'matches-tab-perf-char
             ],
         },
         options: {
+            animation: false,
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
@@ -10938,6 +11087,7 @@ async function renderMatchesTab(teamNumber, containerId = 'matches-tab-perf-char
                     grid:  { color: '#1e293b' },
                 },
                 y: {
+                    ...(yMin != null ? { min: yMin, max: yMax } : {}),
                     ticks: { color: '#64748b', font: { size: 10 } },
                     grid:  {
                         color: ctx => ctx.tick.value === 0 ? '#94a3b8' : '#1e293b',
@@ -11559,7 +11709,15 @@ window.setIgnoredMatch = async function (teamNumber, matchKey) {
         adjustedOPR:      keys.length > 0 ? adjustedOPR : null,
     });
     activeTBAData = await db.tbaTeams.get(pk);
-    await refreshEPADisplays(teamNumber);
+    if (isLocalEpaEnabled()) {
+        await computeLocalEPA(); // recomputes for all local teams; calls refreshEPADisplays internally
+    } else {
+        await refreshEPADisplays(teamNumber);
+    }
+    // Refresh the performance chart if the matches tab is currently open for this team
+    if (lastDetailTab === 'matches' && activeTeamData?.teamNumber === pk) {
+        await renderMatchesTab(pk, 'matches-tab-perf-chart');
+    }
 };
 
 window.setScoutingIgnore = async function (teamNumber, active) {

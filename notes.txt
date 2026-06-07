@@ -62,6 +62,10 @@ D - Gap between subtabs for non-mobile views now...
 
 Real-time nexus updates
 
+Work with matches when sync updates
+Match table, instead of color/allies show with/against in small font vertically
+D - Standarize y axis in match residuals chart
+
 
 
 
