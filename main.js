@@ -2340,8 +2340,17 @@ async function _runTBASyncs() {
         : false;
 
     if (!hasSchedule) {
-        // No schedule yet — fetch it first; skip OPR and EPA until it exists
+        // No schedule yet — try to fetch it first
         await window.syncTBAMatches();
+        const nowHasSchedule = eventKey
+            ? (await db.matches.where('eventKey').equals(eventKey).count()) > 0
+            : false;
+        if (!nowHasSchedule) return;
+        // Schedule just loaded with fresh data — run OPR and EPA immediately
+        // (don't re-call syncTBAMatches; it would 304 and suppress the EPA run)
+        await window.syncTBAOPR();
+        if (isLocalEpaEnabled()) await computeLocalEPA();
+        else _scheduleJitteredStatbotics();
         return;
     }
 
@@ -2389,6 +2398,11 @@ async function computeLocalEPA() {
     const [teams, matches] = await Promise.all([db.teams.toArray(), db.matches.toArray()]);
     if (!teams.length) return;
 
+    // Capture pre-event baseline for any teams added after local EPA was first enabled
+    // (e.g. via syncStatboticsLive bulkPut). Without this, their seed falls back to
+    // currentEPA which may already reflect mid-event Statbotics values.
+    await _capturePreEventEPA(teams);
+
     // Partition teams: those where statbotics already has current-event match data
     // should never be overwritten by local estimates — restore their statbotics values.
     const sbTeams = [];
@@ -2435,6 +2449,22 @@ async function computeLocalEPA() {
             auto:     t.preEventAutoEPA     ?? t.autoEPA     ?? 0,
             endgame:  t.preEventEndgameEPA  ?? t.endgameEPA  ?? 0,
             n: careerN,
+        };
+    }
+    // Seed sbTeams with their pre-event EPA so alliance predictions are accurate during replay.
+    // Without this, getE() falls back to {current:0}, corrupting error terms for localTeams
+    // that share alliances with sbTeams and causing their EPA to drift on every sync.
+    for (const t of sbTeams) {
+        const firstEventMatch = (t.rawStatboticsData || [])
+            .filter(m => eventKey && m.event === eventKey && m.epa?.post)
+            .sort((a, b) => (a.time || 0) - (b.time || 0))[0];
+        const preEpa = firstEventMatch?.epa?.pre ?? t.preEventEPA ?? t.currentEPA ?? 0;
+        const careerN = (t.rawStatboticsData || []).filter(m => m.epa?.post).length;
+        epaState[t.teamNumber] = {
+            current: preEpa,
+            auto:    t.preEventAutoEPA    ?? t.autoEPA    ?? 0,
+            endgame: t.preEventEndgameEPA ?? t.endgameEPA ?? 0,
+            n:       careerN,
         };
     }
     const getE = tn => epaState[tn] || (epaState[tn] = { current: 0, auto: 0, endgame: 0, n: 0 });
