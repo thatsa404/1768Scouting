@@ -1,2 +1,2 @@
-# 1768ScoutingTest.github.io
-Test version of Nashoba Robotics scouting dashboard web app
+# ScoutingApp
+Test version of FRC scouting dashboard web app
